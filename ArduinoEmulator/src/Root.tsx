@@ -1,4 +1,5 @@
 import { lazy, Suspense, useState } from 'react'
+import { HamsterWheel } from './HamsterWheel'
 import { LoginPage } from './LoginPage'
 
 // The workspace (with the Monaco code editor) is a large download that takes most of a second to start
@@ -28,7 +29,16 @@ export function Root() {
 
   if (!signedIn) return <LoginPage onLogin={() => setSignedIn(true)} onSignInIntent={loadApp} />
   return (
-    <Suspense fallback={<div className="app-loading">Loading workspace…</div>}>
+    <Suspense
+      fallback={
+        <div className="app-loading">
+          <div className="app-loading-inner">
+            <HamsterWheel running className="app-loading-hamster" />
+            Loading workspace…
+          </div>
+        </div>
+      }
+    >
       <App onExit={() => setSignedIn(false)} />
     </Suspense>
   )

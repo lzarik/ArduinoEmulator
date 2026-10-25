@@ -49,6 +49,18 @@ button:focus-visible {
   font-size: 14px;
 }
 
+.app-loading-inner {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 14px;
+}
+
+.app-loading-hamster {
+  width: 96px;
+  height: 96px;
+}
+
 .app-load-failed {
   max-width: 360px;
   text-align: center;
@@ -59,4 +71,143 @@ button:focus-visible {
   margin-top: 8px;
   background: #3dbabd;
   color: #0e2a2e;
+}
+
+/* Ohmster's mascot, the hamster in its wheel (HamsterWheel.tsx) */
+.hw {
+  --hw-fur: #f2a65a;
+  --hw-fur-dark: #d8853a;
+  --hw-cream: #fff3e2;
+  --hw-pink: #f49aa8;
+  --hw-rim: #93a7b9;
+  --hw-stand: #6c8093;
+  --hw-outline: none;
+  display: block;
+  overflow: visible;
+}
+
+.hw-letter {
+  --hw-rim: #2a8b8d;
+  --hw-stand: #1d1f22;
+}
+
+.hw-ink {
+  --hw-fur: #b5b4ae;
+  --hw-fur-dark: #85857f;
+  --hw-cream: #e6e4dc;
+  --hw-pink: #6f706c;
+  --hw-rim: #1d1f22;
+  --hw-stand: #1d1f22;
+  --hw-outline: #1d1f22;
+}
+
+.hw-stand { fill: none; stroke: var(--hw-stand); stroke-width: 4; stroke-linecap: round; stroke-linejoin: round; }
+.hw-rim { fill: rgba(255, 255, 255, 0.04); stroke: var(--hw-rim); stroke-width: 3.5; }
+.hw-ink .hw-rim { fill: none; }
+.hw-rim-inner { fill: none; stroke: var(--hw-rim); stroke-width: 1.5; opacity: 0.8; }
+.hw-rung { stroke: var(--hw-rim); stroke-width: 1.6; }
+.hw-spoke { stroke: var(--hw-rim); stroke-width: 1.2; opacity: 0.35; }
+.hw-hub { fill: var(--hw-stand); }
+.hw-fur { fill: var(--hw-fur); }
+.hw-fur-dark { fill: var(--hw-fur-dark); }
+.hw-cream { fill: var(--hw-cream); }
+.hw-pink { fill: var(--hw-pink); }
+.hw-outline { fill: none; stroke: var(--hw-outline); stroke-width: 2.4; }
+.hw-ink-dark { fill: #1d1f22; }
+.hw-shine { fill: #fff; }
+.hw-nose { fill: #e86f86; }
+.hw-ink .hw-nose { fill: #1d1f22; }
+.hw-blush { fill: #f27b90; opacity: 0.45; }
+.hw-ink .hw-blush { opacity: 0; }
+.hw-eye-closed { fill: none; stroke: #1d1f22; stroke-width: 1.1; stroke-linecap: round; }
+/* As the O in the wordmark: a thick teal rim like the letter's stroke, with pale notches turning on it */
+.hw-letter .hw-rim { fill: none; stroke-width: 9; }
+.hw-letter .hw-rim-inner { display: none; }
+.hw-letter .hw-rung { stroke: #e4e2da; stroke-width: 1.4; opacity: 0.75; }
+.hw-letter .hw-spoke { opacity: 0.3; }
+.hw-z { font-family: var(--font-sans); font-size: 9px; font-weight: 800; fill: var(--hw-rim); }
+
+.hw-leg-line { stroke: var(--hw-fur-dark); stroke-width: 2.8; stroke-linecap: round; }
+.hw-ink .hw-leg-line { stroke: #1d1f22; stroke-width: 2.2; }
+
+.hw-wheel,
+.hw-hamster,
+.hw-eye,
+.hw-z text {
+  transform-box: view-box;
+}
+
+/* Each leg swings from its hip, the top centre of its own box */
+.hw-leg {
+  transform-box: fill-box;
+  transform-origin: 50% 0;
+}
+
+.hw-wheel { transform-origin: 50px 46px; }
+.hw-hamster-pos { transform-box: view-box; }
+.hw-eye { transform-origin: 62.4px 63px; animation: hw-blink 5s infinite; }
+
+@keyframes hw-spin { to { transform: rotate(360deg); } }
+@keyframes hw-bob { from { transform: translateY(0) rotate(0deg); } to { transform: translateY(-1.4px) rotate(-1.5deg); } }
+@keyframes hw-stride { from { transform: rotate(-38deg); } to { transform: rotate(38deg); } }
+@keyframes hw-blink {
+  0%, 94%, 100% { transform: scaleY(1); }
+  96% { transform: scaleY(0.1); }
+}
+@keyframes hw-snooze {
+  0%   { opacity: 0; transform: translate(0, 4px); }
+  30%  { opacity: 1; }
+  100% { opacity: 0; transform: translate(3px, -6px); }
+}
+
+/* Always jogging; the wheel turns clockwise because the hamster runs to the right, pushing the floor back.
+   --hw-step is one stride (a leg swinging back or forward), and the wheel keeps pace with it. */
+.hw { --hw-step: 0.26s; --hw-lap: 2.2s; }
+.hw.running { --hw-step: 0.13s; --hw-lap: 0.85s; }
+
+.hw .hw-wheel { animation: hw-spin var(--hw-lap) linear infinite; }
+.hw .hw-hamster { animation: hw-bob var(--hw-step) ease-in-out infinite alternate; }
+.hw .hw-leg-a { animation: hw-stride var(--hw-step) ease-in-out infinite alternate; }
+.hw .hw-leg-b { animation: hw-stride var(--hw-step) ease-in-out infinite alternate-reverse; }
+
+/* Hopping off to rest beside the wheel (landing on the wordmark's baseline, left of the O), and back on.
+   While it rests, the wheel stops where it is and the hamster stands still. */
+@keyframes hw-hop-off {
+  0%   { transform: translate(0, 0); }
+  45%  { transform: translate(-30px, -24px); }
+  100% { transform: translate(-64px, 8px); }
+}
+
+@keyframes hw-hop-on {
+  0%   { transform: translate(-64px, 8px); }
+  55%  { transform: translate(-30px, -24px); }
+  100% { transform: translate(0, 0); }
+}
+
+.hw-hops .hw-hamster-pos { animation: hw-hop-on 0.6s cubic-bezier(0.3, 0.6, 0.4, 1) both; }
+.hw-hops.resting .hw-hamster-pos { animation-name: hw-hop-off; }
+.hw.resting .hw-wheel { animation-play-state: paused; }
+.hw.resting .hw-hamster,
+.hw.resting .hw-leg { animation: none; }
+
+/* Napping: the wheel stops, legs tucked under */
+.hw.sleeping .hw-wheel,
+.hw.sleeping .hw-hamster { animation: none; }
+.hw.sleeping .hw-leg { animation: none; opacity: 0; }
+.hw.sleeping .hw-z text { animation: hw-snooze 2.6s ease-in-out infinite; }
+.hw.sleeping .hw-z text + text { animation-delay: 1.3s; }
+
+/* E-paper can only redraw a few times a second, so the ink hamster moves in choppy frames */
+.hw-ink { --hw-step: 0.5s; --hw-lap: 4s; }
+.hw-ink .hw-wheel { animation-timing-function: steps(16); }
+.hw-ink .hw-hamster,
+.hw-ink .hw-leg { animation-timing-function: steps(2, jump-none); }
+
+@media (prefers-reduced-motion: reduce) {
+  .hw .hw-wheel,
+  .hw .hw-hamster,
+  .hw .hw-leg,
+  .hw .hw-eye,
+  .hw .hw-hamster-pos { animation: none !important; }
+  .hw-hops.resting .hw-hamster-pos { transform: translate(-64px, 8px); }
 }

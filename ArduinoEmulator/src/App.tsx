@@ -7,7 +7,10 @@ import type { CommandInformation, EmulatorState, MachineData, PinInputs } from '
 import { Workbench, type Tool } from './Workbench'
 import { Debugger } from './Debugger'
 import { PartsPalette } from './PartsPalette'
+import { NewProjectDialog } from './NewProjectDialog'
 import { ProjectsSidebar } from './ProjectsSidebar'
+import { HamsterWheel } from './HamsterWheel'
+import { HomeScreen, type HomeSection } from './HomeScreen'
 import { Learn } from './Learn'
 import { BuildProgress, type BuildState } from './BuildProgress'
 import { WIRE_COLORS, evaluateCircuit, type Circuit, type LedColor } from './circuit'
@@ -160,7 +163,15 @@ function App({ onExit }: { onExit: () => void })
   const [projectName, setProjectName] = useState(project.name);
   const [codeInput, setCodeInput] = useState(project.code);
   const [circuit, setCircuit] = useState<Circuit>(project.circuit);
-  const [dirty, setDirty] = useState(!projects.some((p) => p.id === project.id));
+  // Starts clean: either the most recent saved project, or an untouched placeholder (with no saved
+  // projects, the home screen asks for a new one before the workspace opens).
+  const [dirty, setDirty] = useState(false);
+
+  // Signing in lands on the home screen; opening or creating a project switches to the workspace.
+  const [view, setView] = useState<'home' | 'workspace'>('home');
+  const [homeSection, setHomeSection] = useState<HomeSection>('projects');
+  const [visitedWorkspace, setVisitedWorkspace] = useState(false);
+  const [naming, setNaming] = useState(false);
 
   // Workspace ---------------------------------------------------------------------------------------
   const [tab, setTab] = useState<Tab>('code');
@@ -612,8 +623,8 @@ function App({ onExit }: { onExit: () => void })
     setDirty(false);
   }, [project, projectName, codeInput, circuit, projects]);
 
-  const openProject = (p: Project) => {
-    if (dirty && !window.confirm('Discard unsaved changes to the current project?')) return false;
+  const openProject = (p: Project, discardChanges = false) => {
+    if (dirty && !discardChanges && !window.confirm('Discard unsaved changes to the current project?')) return false;
     setProject(p);
     setProjectName(p.name);
     setCodeInput(p.code);
@@ -633,6 +644,7 @@ function App({ onExit }: { onExit: () => void })
     if (!openProject({ ...newProject(lessonTitle), code })) return;
     setTab('code');
     setCodeSource('sketch');
+    enterWorkspace();
   };
 
   const deleteProject = (p: Project) => {
@@ -641,6 +653,61 @@ function App({ onExit }: { onExit: () => void })
     storeProjects(list);
     setProjects(list);
     if (p.id === project.id) setDirty(true);
+  };
+
+  // Home screen -------------------------------------------------------------------------------------
+
+  const enterWorkspace = () => {
+    setVisitedWorkspace(true);
+    setView('workspace');
+  };
+
+  const goHome = () => {
+    if (running) stop();
+    // Only one Learn open at a time, so lesson progress isn't kept in two places
+    if (tab === 'learn') setTab('code');
+    setView('home');
+  };
+
+  // A new project is named up front and saved straight away, so it shows on the home screen.
+  const createProject = (name: string) => {
+    const created = newProject(name);
+    if (!openProject(created)) return;
+    const list = [created, ...projects];
+    storeProjects(list);
+    setProjects(list);
+    setDirty(false);
+    setNaming(false);
+    setTab('code');
+    setCodeSource('sketch');
+    enterWorkspace();
+  };
+
+  const openFromHome = (p: Project) => {
+    if (p.id !== project.id && !openProject(p)) return;
+    enterWorkspace();
+  };
+
+  // The open project appears first, as it is right now, while it has unsaved changes.
+  const isSaved = projects.some((p) => p.id === project.id);
+  const homeProjects =
+    dirty && (isSaved || visitedWorkspace)
+      ? [
+          { ...project, name: projectName.trim() || 'Untitled project', code: codeInput, circuit, updatedAt: Date.now() },
+          ...projects.filter((p) => p.id !== project.id),
+        ]
+      : projects;
+
+  const deleteFromHome = (p: Project) => {
+    if (projects.some((saved) => saved.id === p.id)) {
+      deleteProject(p);
+      return;
+    }
+    // Never saved: discarding it just leaves a fresh, hidden project open.
+    if (!window.confirm(`Discard "${p.name}"? It was never saved.`)) return;
+    openProject(newProject('My first project'), true);
+    setDirty(false);
+    setVisitedWorkspace(false);
   };
 
   useEffect(() => {
@@ -679,248 +746,270 @@ function App({ onExit }: { onExit: () => void })
   );
 
   return (
-    <div className="wb-app app-main">
-      <header className="wb-header">
-        <div className="wb-brand">
-          <span className="brand-e">EE</span>XPO
-        </div>
+    <>
+      {view === 'home' && (
+        <HomeScreen
+          projects={homeProjects}
+          unsavedId={dirty ? project.id : null}
+          onOpen={openFromHome}
+          onNew={() => setNaming(true)}
+          onDelete={deleteFromHome}
+          onExit={onExit}
+          section={homeSection}
+          onSection={setHomeSection}
+          onTryCode={tryLessonCode}
+        />
+      )}
+      {naming && <NewProjectDialog onCreate={createProject} onCancel={() => setNaming(false)} />}
 
-        <div className="wb-project">
-          <input
-            className="wb-project-name"
-            value={projectName}
-            onChange={(e) => {
-              setProjectName(e.target.value);
-              markDirty();
-            }}
-            aria-label="Project name"
-          />
-          <span className={`wb-save-state${dirty ? ' dirty' : ''}`}>{dirty ? 'Unsaved' : 'Saved'}</span>
-        </div>
-
-        <nav className="wb-tabs" role="tablist" aria-label="View">
-          {(['code', 'design', 'learn'] as const).map((t) => (
-            <button key={t} type="button" role="tab" aria-selected={tab === t} className={tab === t ? 'active' : ''} onClick={() => setTab(t)}>
-              {TAB_LABELS[t]}
-            </button>
-          ))}
-        </nav>
-
-        <div className="wb-header-actions">
-          <span className={`wb-status ${loading ? 'wb-status-busy' : `wb-status-${programStatus.toLowerCase().replace(/[^a-z]/g, '')}`}`}>
-            {loading && <span className="wb-spinner" aria-hidden="true" />}
-            {programStatus}
-          </span>
-          {running ? (
-            <button type="button" className="wb-btn stop" onClick={stop}>
-              ■ Stop
-            </button>
-          ) : (
-            <button type="button" className="wb-btn primary" onClick={handleRunClick} disabled={loading}>
-              Run ▶
-            </button>
-          )}
-          <button type="button" className="wb-btn" onClick={saveProject} title="Save (Ctrl+S / Cmd+S)">
-            Save
+      {/* The workspace stays mounted behind the home screen, so the editor keeps its undo history */}
+      <div className="wb-app app-main" hidden={view === 'home'}>
+        <header className="wb-header">
+          {/* The hamster sprints whenever the emulator is busy. Clicking the logo goes back home. */}
+          <button type="button" className="wb-brand wb-home" onClick={goHome} title="Home: all projects">
+            <HamsterWheel running={running || loading} className="wb-hamster" />
+            <span>
+              <span className="brand-ohm">Ohm</span>ster
+            </span>
           </button>
-          <button type="button" className="wb-btn ghost" onClick={onExit}>
-            Exit
-          </button>
-        </div>
-      </header>
 
-      <div className="wb-body">
-        {tab !== 'learn' && (
-          <ProjectsSidebar
-            projects={projects}
-            currentId={project.id}
-            currentName={projectName}
-            collapsed={sidebarCollapsed}
-            onToggle={() => setSidebarCollapsed((c) => !c)}
-            onOpen={openProject}
-            onNew={() => openProject(newProject())}
-            onDelete={deleteProject}
-          />
-        )}
-
-        <div className="wb-content">
-          {build && <BuildProgress build={build} now={now} onDismiss={() => setBuild(null)} />}
-
-          {/* Code and Design stay mounted so the editor keeps its undo history and the bench its state */}
-          <section className="code-view" hidden={tab !== 'code'}>
-            <div className="code-main">
-              <div className="code-toolbar">
-                <div className="segmented small" role="tablist" aria-label="Source">
-                  <button type="button" className={codeSource === 'sketch' ? 'active' : ''} onClick={() => setCodeSource('sketch')}>
-                    Sketch
-                  </button>
-                  <button type="button" className={codeSource === 'hex' ? 'active' : ''} onClick={() => setCodeSource('hex')}>
-                    Hex file
-                  </button>
-                </div>
-                <div className="code-toolbar-actions">
-                  {codeSource === 'sketch' ? (
-                    <button type="button" className="wb-btn" onClick={handleCompileCode} disabled={loading || running}>
-                      Compile
-                    </button>
-                  ) : (
-                    <>
-                      <input type="file" ref={fileInputRef} onChange={handleFileSelect} accept=".hex" hidden />
-                      <button type="button" className="wb-btn" onClick={() => fileInputRef.current?.click()} disabled={running}>
-                        Open .hex…
-                      </button>
-                    </>
-                  )}
-                  <span className="toolbar-divider" />
-                  <button type="button" className="wb-btn" onClick={handleStep} disabled={running || commands.length === 0}>
-                    Step
-                  </button>
-                  <button type="button" className="wb-btn" onClick={() => resetMachine()} disabled={commands.length === 0}>
-                    Reset
-                  </button>
-                  <div className="segmented small" aria-label="Speed">
-                    {SPEEDS.map((sp, i) => (
-                      <button key={sp.label} type="button" className={speed === i ? 'active' : ''} onClick={() => setSpeed(i)}>
-                        {sp.label}
-                      </button>
-                    ))}
-                  </div>
-                </div>
-              </div>
-
-              <div className="code-editor" hidden={codeSource !== 'sketch'}>
-                <Editor
-                  language="cpp"
-                  theme="vs-dark"
-                  value={codeInput}
-                  onMount={handleCodeEditorMount}
-                  onChange={(value) => {
-                    setCodeInput(value ?? '');
-                    markDirty();
-                  }}
-                  options={{
-                    automaticLayout: true,
-                    minimap: { enabled: false },
-                    fontSize: 14,
-                    fontFamily: "'Ubuntu Sans Mono', 'Ubuntu Mono', monospace",
-                    tabSize: 2,
-                    insertSpaces: true,
-                    wordWrap: 'on',
-                    suggestOnTriggerCharacters: true,
-                    quickSuggestions: {
-                      other: true,
-                      comments: false,
-                      strings: false,
-                    },
-                    scrollBeyondLastLine: false,
-                  }}
-                />
-              </div>
-
-              {codeSource === 'hex' && (
-                <div className="hex-view">
-                  {!hexText ? (
-                    <div
-                      className={`hex-drop${isDraggingOver ? ' over' : ''}`}
-                      onDrop={handleDrop}
-                      onDragOver={(e) => {
-                        e.preventDefault();
-                        setIsDraggingOver(true);
-                      }}
-                      onDragLeave={() => setIsDraggingOver(false)}
-                    >
-                      {isDraggingOver ? 'Release to load' : (
-                        <>
-                          Drop a <code>.hex</code> file here, or compile your sketch to see its hex
-                        </>
-                      )}
-                    </div>
-                  ) : (
-                    <>
-                      <div className="segmented small">
-                        {(
-                          [
-                            ['hex', 'Hex'],
-                            ['elf', 'ELF'],
-                            ['unknown', `Unknown (${unknownInstructions.length})`],
-                            ['errors', `Errors (${errorMessages.length})`],
-                          ] as const
-                        ).map(([id, label]) => (
-                          <button key={id} type="button" className={hexTab === id ? 'active' : ''} onClick={() => setHexTab(id)}>
-                            {label}
-                          </button>
-                        ))}
-                      </div>
-                      {hexTab === 'hex' && <pre className="hex-pre">{hexText}</pre>}
-                      {hexTab === 'elf' && <pre className="hex-pre">{elfText || 'No ELF yet. Compile code to see ELF data.'}</pre>}
-                      {hexTab === 'unknown' && (
-                        <pre className="hex-pre">
-                          {unknownInstructions.length === 0
-                            ? 'No unknown instructions found.'
-                            : unknownInstructions.map((c) => formatCommandBytes(c.CommandBytes)).join('\n')}
-                        </pre>
-                      )}
-                      {hexTab === 'errors' && <pre className="hex-pre">{errorMessages.join('\n') || 'No errors.'}</pre>}
-                    </>
-                  )}
-                </div>
-              )}
-
-              {errorsPanel}
-            </div>
-
-            <Debugger
-              commands={commands}
-              position={instructionPosition}
-              machine={machineData}
-              changedRegisters={changedRegisters}
-              cycles={cycles}
-              onInstructionClick={(i) => {
-                const line = commands[i]?.SourceLineNumber;
-                if (line == null) return;
-                setCodeSource('sketch');
-                highlightSourceLine(line, line % pastelPalette.length);
-              }}
-            />
-          </section>
-
-          <section className="design-view" hidden={tab !== 'design'}>
-            <PartsPalette
-              tool={tool}
-              onToolChange={setTool}
-              ledColor={ledColor}
-              onLedColorChange={setLedColor}
-              wireColor={wireColor}
-              onWireColorChange={setWireColor}
-            />
-            <Workbench
-              circuit={circuit}
-              onChange={(c) => {
-                setCircuit(c);
+          <div className="wb-project">
+            <input
+              className="wb-project-name"
+              value={projectName}
+              onChange={(e) => {
+                setProjectName(e.target.value);
                 markDirty();
               }}
-              tool={tool}
-              onToolChange={setTool}
-              wireColor={wireColor}
-              state={circuitState}
-              pressed={pressed}
-              onPress={(id, down) =>
-                setPressed((prev) => {
-                  const next = new Set(prev);
-                  if (down) next.add(id);
-                  else next.delete(id);
-                  return next;
-                })
-              }
-              running={running}
-              onBoardReset={() => resetMachine({ keepRunning: true })}
+              aria-label="Project name"
             />
-          </section>
+            <span className={`wb-save-state${dirty ? ' dirty' : ''}`}>{dirty ? 'Unsaved' : 'Saved'}</span>
+          </div>
 
-          {tab === 'learn' && <Learn onTryCode={tryLessonCode} />}
+          <nav className="wb-tabs" role="tablist" aria-label="View">
+            {(['code', 'design', 'learn'] as const).map((t) => (
+              <button key={t} type="button" role="tab" aria-selected={tab === t} className={tab === t ? 'active' : ''} onClick={() => setTab(t)}>
+                {TAB_LABELS[t]}
+              </button>
+            ))}
+          </nav>
+
+          <div className="wb-header-actions">
+            <span className={`wb-status ${loading ? 'wb-status-busy' : `wb-status-${programStatus.toLowerCase().replace(/[^a-z]/g, '')}`}`}>
+              {loading && <span className="wb-spinner" aria-hidden="true" />}
+              {programStatus}
+            </span>
+            {running ? (
+              <button type="button" className="wb-btn stop" onClick={stop}>
+                ■ Stop
+              </button>
+            ) : (
+              <button type="button" className="wb-btn primary" onClick={handleRunClick} disabled={loading}>
+                Run ▶
+              </button>
+            )}
+            <button type="button" className="wb-btn" onClick={saveProject} title="Save (Ctrl+S / Cmd+S)">
+              Save
+            </button>
+            <button type="button" className="wb-btn ghost" onClick={onExit}>
+              Exit
+            </button>
+          </div>
+        </header>
+
+        <div className="wb-body">
+          {tab !== 'learn' && (
+            <ProjectsSidebar
+              projects={projects}
+              currentId={project.id}
+              currentName={projectName}
+              collapsed={sidebarCollapsed}
+              onToggle={() => setSidebarCollapsed((c) => !c)}
+              onOpen={openProject}
+              onNew={() => setNaming(true)}
+              onDelete={deleteProject}
+            />
+          )}
+
+          <div className="wb-content">
+            {build && <BuildProgress build={build} now={now} onDismiss={() => setBuild(null)} />}
+
+            {/* Code and Design stay mounted so the editor keeps its undo history and the bench its state */}
+            <section className="code-view" hidden={tab !== 'code'}>
+              <div className="code-main">
+                <div className="code-toolbar">
+                  <div className="segmented small" role="tablist" aria-label="Source">
+                    <button type="button" className={codeSource === 'sketch' ? 'active' : ''} onClick={() => setCodeSource('sketch')}>
+                      Sketch
+                    </button>
+                    <button type="button" className={codeSource === 'hex' ? 'active' : ''} onClick={() => setCodeSource('hex')}>
+                      Hex file
+                    </button>
+                  </div>
+                  <div className="code-toolbar-actions">
+                    {codeSource === 'sketch' ? (
+                      <button type="button" className="wb-btn" onClick={handleCompileCode} disabled={loading || running}>
+                        Compile
+                      </button>
+                    ) : (
+                      <>
+                        <input type="file" ref={fileInputRef} onChange={handleFileSelect} accept=".hex" hidden />
+                        <button type="button" className="wb-btn" onClick={() => fileInputRef.current?.click()} disabled={running}>
+                          Open .hex…
+                        </button>
+                      </>
+                    )}
+                    <span className="toolbar-divider" />
+                    <button type="button" className="wb-btn" onClick={handleStep} disabled={running || commands.length === 0}>
+                      Step
+                    </button>
+                    <button type="button" className="wb-btn" onClick={() => resetMachine()} disabled={commands.length === 0}>
+                      Reset
+                    </button>
+                    <div className="segmented small" aria-label="Speed">
+                      {SPEEDS.map((sp, i) => (
+                        <button key={sp.label} type="button" className={speed === i ? 'active' : ''} onClick={() => setSpeed(i)}>
+                          {sp.label}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                </div>
+
+                <div className="code-editor" hidden={codeSource !== 'sketch'}>
+                  <Editor
+                    language="cpp"
+                    theme="vs-dark"
+                    value={codeInput}
+                    onMount={handleCodeEditorMount}
+                    onChange={(value) => {
+                      setCodeInput(value ?? '');
+                      markDirty();
+                    }}
+                    options={{
+                      automaticLayout: true,
+                      minimap: { enabled: false },
+                      fontSize: 14,
+                      fontFamily: "'Ubuntu Sans Mono', 'Ubuntu Mono', monospace",
+                      tabSize: 2,
+                      insertSpaces: true,
+                      wordWrap: 'on',
+                      suggestOnTriggerCharacters: true,
+                      quickSuggestions: {
+                        other: true,
+                        comments: false,
+                        strings: false,
+                      },
+                      scrollBeyondLastLine: false,
+                    }}
+                  />
+                </div>
+
+                {codeSource === 'hex' && (
+                  <div className="hex-view">
+                    {!hexText ? (
+                      <div
+                        className={`hex-drop${isDraggingOver ? ' over' : ''}`}
+                        onDrop={handleDrop}
+                        onDragOver={(e) => {
+                          e.preventDefault();
+                          setIsDraggingOver(true);
+                        }}
+                        onDragLeave={() => setIsDraggingOver(false)}
+                      >
+                        {isDraggingOver ? 'Release to load' : (
+                          <>
+                            Drop a <code>.hex</code> file here, or compile your sketch to see its hex
+                          </>
+                        )}
+                      </div>
+                    ) : (
+                      <>
+                        <div className="segmented small">
+                          {(
+                            [
+                              ['hex', 'Hex'],
+                              ['elf', 'ELF'],
+                              ['unknown', `Unknown (${unknownInstructions.length})`],
+                              ['errors', `Errors (${errorMessages.length})`],
+                            ] as const
+                          ).map(([id, label]) => (
+                            <button key={id} type="button" className={hexTab === id ? 'active' : ''} onClick={() => setHexTab(id)}>
+                              {label}
+                            </button>
+                          ))}
+                        </div>
+                        {hexTab === 'hex' && <pre className="hex-pre">{hexText}</pre>}
+                        {hexTab === 'elf' && <pre className="hex-pre">{elfText || 'No ELF yet. Compile code to see ELF data.'}</pre>}
+                        {hexTab === 'unknown' && (
+                          <pre className="hex-pre">
+                            {unknownInstructions.length === 0
+                              ? 'No unknown instructions found.'
+                              : unknownInstructions.map((c) => formatCommandBytes(c.CommandBytes)).join('\n')}
+                          </pre>
+                        )}
+                        {hexTab === 'errors' && <pre className="hex-pre">{errorMessages.join('\n') || 'No errors.'}</pre>}
+                      </>
+                    )}
+                  </div>
+                )}
+
+                {errorsPanel}
+              </div>
+
+              <Debugger
+                commands={commands}
+                position={instructionPosition}
+                machine={machineData}
+                changedRegisters={changedRegisters}
+                cycles={cycles}
+                onInstructionClick={(i) => {
+                  const line = commands[i]?.SourceLineNumber;
+                  if (line == null) return;
+                  setCodeSource('sketch');
+                  highlightSourceLine(line, line % pastelPalette.length);
+                }}
+              />
+            </section>
+
+            <section className="design-view" hidden={tab !== 'design'}>
+              <PartsPalette
+                tool={tool}
+                onToolChange={setTool}
+                ledColor={ledColor}
+                onLedColorChange={setLedColor}
+                wireColor={wireColor}
+                onWireColorChange={setWireColor}
+              />
+              <Workbench
+                circuit={circuit}
+                onChange={(c) => {
+                  setCircuit(c);
+                  markDirty();
+                }}
+                tool={tool}
+                onToolChange={setTool}
+                wireColor={wireColor}
+                state={circuitState}
+                pressed={pressed}
+                onPress={(id, down) =>
+                  setPressed((prev) => {
+                    const next = new Set(prev);
+                    if (down) next.add(id);
+                    else next.delete(id);
+                    return next;
+                  })
+                }
+                running={running}
+                onBoardReset={() => resetMachine({ keepRunning: true })}
+              />
+            </section>
+
+            {tab === 'learn' && <Learn onTryCode={tryLessonCode} />}
+          </div>
         </div>
       </div>
-    </div>
+    </>
   )
 }
 

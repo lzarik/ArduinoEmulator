@@ -10,6 +10,8 @@ Electricity behaves a lot like water flowing through pipes:
 
 More pressure pushes more water. A narrower pipe lets less through. That is the whole relationship.
 
+A **resistor** is a small part whose only job is to add resistance: a deliberately narrow bit of pipe you can put into a circuit to hold the current back.
+
 ## Ohm's law
 
 ```text
@@ -18,7 +20,7 @@ V = I × R
 voltage (volts) = current (amps) × resistance (ohms)
 ```
 
-Rearranged, it answers whichever question you have:
+Electronics uses **I** as the letter for current (from the French *intensité*) and **R** for resistance. Rearranged, the equation answers whichever question you have:
 
 | You know | You want | Use |
 |---|---|---|
@@ -47,11 +49,11 @@ The energy a part turns into heat each second is its **power**, measured in **wa
 P = V × I
 ```
 
-That 10 Ω resistor across 5 V would carry 0.5 A and turn 2.5 W into heat. A typical small resistor is rated for 0.25 W, so it would quickly get very hot. Ohm's law lets you catch problems like this before you build them.
+That 10 Ω resistor across 5 V would carry 0.5 A and turn 2.5 W into heat. A typical small resistor is **rated** for 0.25 W (designed to safely handle up to that much), so it would quickly get very hot. Ohm's law lets you catch problems like this before you build them.
 
 ## Short circuits
 
-A wire has almost no resistance. Connect 5V straight to GND with a wire and R is nearly 0, so I = V ÷ R becomes enormous. That is a **short circuit**, and it can damage the board. Every path from 5V (or a pin) to GND needs something with resistance in it.
+A wire has almost no resistance. Connect the 5V pin straight to GND (0 V) with a wire and R is nearly 0, so I = V ÷ R becomes enormous. That is a **short circuit**, and it can damage the board. Every path from 5V (or a pin) to GND needs something with resistance in it.
 
 ## Key ideas
 

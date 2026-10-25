@@ -317,7 +317,7 @@ const BoardGraphics = memo(function BoardGraphics({ onPressReset }: { onPressRes
 
     {/* Silkscreen name */}
     <text x={490} y={258} className="pcb-brand">
-      <tspan className="pcb-brand-e">EE</tspan>XPO
+      <tspan className="pcb-brand-ohm">Ohm</tspan>ster
     </text>
 
     {/* Microcontroller in its DIP socket */}

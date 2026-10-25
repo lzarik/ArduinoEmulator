@@ -2,7 +2,7 @@
 
 ## Ports
 
-The ATmega328P groups its pins into **ports** of up to eight pins: **Port B**, **Port C** and **Port D**. Each pin is one bit of its port. Arduino pin numbers are friendly names for those bits:
+The ATmega328P groups its pins into **ports** of up to eight pins: **Port B**, **Port C** and **Port D**. Each pin is one bit of its port. The 8 bits in a byte are numbered 0 to 7, starting from the right. Arduino pin numbers are friendly names for those bits:
 
 | Arduino pins | Port bits |
 |---|---|
@@ -14,7 +14,7 @@ So **pin 13 is Port B, bit 5**, written PB5.
 
 ## Three registers per port
 
-Each port is controlled by three I/O registers. Each bit in them controls the matching pin.
+Each port is controlled by three I/O registers. Each bit in them controls the matching pin (bit 5 controls the pin on bit 5, and so on).
 
 | Register | Address | A 1 in bit n means |
 |---|---|---|
@@ -27,7 +27,7 @@ Ports C and D work the same way: `PINC`, `DDRC`, `PORTC` at `0x26`–`0x28` and 
 So `pinMode(13, OUTPUT)` sets bit 5 of DDRB to 1, and `digitalWrite(13, HIGH)` sets bit 5 of PORTB to 1. That is all they do in the end.
 
 > [!TIP]
-> EEXPO's debugger has an **I/O ports** table showing DDR, PORT and PIN for each port, bit by bit. Run Blink and watch bit 5 of PORTB flip on and off.
+> Ohmster's debugger has an **I/O ports** table showing DDR, PORT and PIN for each port, bit by bit. Run Blink and watch bit 5 of PORTB flip on and off.
 
 ## Blink without the Arduino functions
 
@@ -50,16 +50,25 @@ void loop()
 
 ### The bit tricks
 
-- `1 << 5` is the number 1 shifted left five places: binary `00100000`, a **mask** with only bit 5 set.
+These lines use **bitwise operators**, which work on each bit of a byte separately:
+
+- **OR** (`|`): the result bit is 1 if *either* bit is 1.
+- **AND** (`&`): the result bit is 1 only if *both* bits are 1.
+- **XOR** (`^`): the result bit is 1 if the two bits are *different*.
+- **NOT** (`~`): flips every bit, 0 to 1 and 1 to 0.
+
+And `x |= m` is shorthand for `x = x | m` (the same goes for `&=` and `^=`). Now the tricks:
+
+- `1 << 5` is the number 1 **shifted** left five places (moved over, with zeros filling in behind): binary `00100000`, a **mask** with only bit 5 set. A mask picks out the bits you want to change.
 - `PORTB |= mask` ORs the mask in. Bit 5 becomes 1 and every other bit stays as it was.
 - `PORTB &= ~mask` ANDs with the inverted mask (`11011111`). Bit 5 becomes 0 and the rest stay put.
 - `PORTB ^= mask` XORs it, flipping bit 5.
 
-These three patterns (set, clear, toggle) appear in nearly all low-level code.
+These three patterns (set, clear, toggle) appear in nearly all **low-level** code (code that works directly with the hardware).
 
 ## Why bother?
 
-`digitalWrite` is convenient but does a lot of work. It looks up which port and bit the pin number means, checks whether a PWM timer is using the pin and switches it off, turns off interrupts while it changes the register, and finally writes it. That takes dozens of clock cycles.
+`digitalWrite` is convenient but does a lot of work. It looks up which port and bit the pin number means, checks whether a PWM timer is using the pin and switches it off, turns off interrupts while it changes the register, and finally writes it. That takes dozens of **clock cycles** (ticks of the chip's 16 MHz clock).
 
 `PORTB |= (1 << 5);` compiles to a single instruction, `SBI 0x05, 5` ("set bit 5 in I/O register 5"), which takes 2 cycles. When timing is tight, writing registers directly can be many times faster.
 

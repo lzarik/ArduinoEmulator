@@ -6,7 +6,7 @@ A variable is a named place in memory that holds a value. On a laptop you rarely
 int count = 0;
 ```
 
-This says: set aside room for an `int` (an integer), call it `count`, and start it at 0. The **type** (`int`) decides how much memory the variable uses and what values it can hold.
+This says: set aside room for an `int` (an **integer**, meaning a whole number with no decimal point), call it `count`, and start it at 0. The **type** (`int`) decides how much memory the variable uses and what values it can hold.
 
 ## Types on the Uno
 
@@ -21,12 +21,14 @@ This says: set aside room for an `int` (an integer), call it `count`, and start 
 | `unsigned long` | 4 bytes | 0 to about 4.29 billion | Time in milliseconds |
 | `float` | 4 bytes | about ±3.4 × 10³⁸, 6 to 7 digits | Numbers with decimals |
 
+Reading the table: a **flag** is a true/false marker, like "has the button been pressed?". **Unsigned** types give up negative numbers so they can count twice as high. And 3.4 × 10³⁸ is an enormous number (34 followed by 37 zeros), though a `float` only keeps its first 6 or 7 digits exactly.
+
 > [!WARNING]
 > On the Uno an `int` is only **2 bytes**, so it tops out at 32,767. On most computers (and on many other boards) an `int` is 4 bytes. Code that counts milliseconds in an `int` breaks after about 33 seconds.
 
 ## Overflow
 
-When a value goes past the top of its range, it wraps around to the bottom, like a car's odometer rolling over:
+When a value goes past the top of its range, it **overflows**: it wraps around to the bottom, like a car's mileage counter rolling over from 999999 to 000000:
 
 ```cpp
 byte b = 255;
@@ -40,11 +42,11 @@ There is no error and no warning while the program runs. The number just wraps. 
 
 ## Why size matters here
 
-**Memory.** The Uno has 2048 bytes of SRAM for all your variables, plus the stack. An array of 500 `long`s would use all of it.
+**Memory.** The Uno has 2048 bytes of SRAM for all your variables, plus the **stack** (a work area the chip uses when it runs functions; *Registers and Memory* explains it). An **array** (a list of values stored together) of 500 `long`s would use all of it.
 
-**Speed.** The ATmega328P is an **8-bit** CPU: it works on one byte at a time. Adding two `byte`s is one instruction. Adding two `int`s takes two (add the low bytes, then add the high bytes plus the carry). Adding two `long`s takes four. A `float` has no hardware support at all, so every float operation runs a small software routine that takes dozens or hundreds of instructions.
+**Speed.** The ATmega328P is an **8-bit** CPU: it works on one byte at a time. Adding two `byte`s is one instruction. Adding two `int`s takes two: an `int`'s two bytes are its low half and its high half, and the chip adds the low halves first, then the high halves plus the **carry**, just like adding two-digit numbers column by column and carrying the 1. Adding two `long`s takes four. And the chip has no circuitry for decimal maths at all, so every `float` calculation runs a small program of its own that takes dozens or hundreds of instructions.
 
-You will see this for yourself in the last unit, when you read the instructions the compiler produces.
+You will see this for yourself in the last unit, when you read the machine-code instructions the compiler produces.
 
 ## const
 

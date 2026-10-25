@@ -2,6 +2,8 @@ Programs get interesting when they make decisions and repeat work. C++ gives you
 
 ## if and else
 
+Imagine a sketch with a variable `temperature`, holding a reading from a temperature sensor, and a fan wired to the pin named `fanPin`:
+
 ```cpp
 if (temperature > 30) {
   digitalWrite(fanPin, HIGH);
@@ -12,9 +14,11 @@ if (temperature > 30) {
 }
 ```
 
-The condition in brackets is checked; if it is true, that block runs and the rest are skipped.
+The condition in brackets is checked; if it is true, the code in its braces (called a **block**) runs and the rest are skipped.
 
 ### Comparing and combining
+
+Symbols that compare or combine values are called **operators**:
 
 | Operator | Means |
 |---|---|
@@ -26,7 +30,7 @@ The condition in brackets is checked; if it is true, that block runs and the res
 | `!` | not: flips true and false |
 
 > [!WARNING]
-> `=` assigns and `==` compares. `if (x = 5)` sets x to 5 and is always true. It compiles without complaint, so it's one of the most common bugs in C and C++.
+> `=` **assigns** (stores a value in a variable) and `==` compares. `if (x = 5)` sets x to 5 and is always true. It compiles without complaint, so it's one of the most common **bugs** (mistakes in code) in C and C++.
 
 ## for loops
 
@@ -38,7 +42,7 @@ for (int i = 0; i < 3; i++) {
 }
 ```
 
-The three parts are: start (`int i = 0`), keep going while (`i < 3`), and after each pass (`i++`, add one).
+The three parts are: start (`int i = 0`), keep going while (`i < 3`), and after each pass (`i++`, add one). Likewise `i--` subtracts one, which lets a loop count down.
 
 Loops are perfect for a row of LEDs. Wire LEDs to pins 8 through 12, then run a light that sweeps back and forth:
 

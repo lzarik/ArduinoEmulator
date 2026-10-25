@@ -2,13 +2,13 @@
 
 ## delay() stops everything
 
-While `delay(1000)` runs, the CPU does nothing useful for a whole second. It can't check a button, update another LED, or respond to anything. For Blink that's fine. For a sketch that blinks an LED *and* watches a button, the button only gets checked between delays, so presses are missed.
+While `delay(1000)` runs, the CPU does nothing useful for a whole second. It can't check a button, update another LED, or respond to anything. For Blink that's fine. For a sketch that blinks an LED *and* watches a button, the button only gets checked between delays, so presses are missed. A function like `delay()` that holds everything up until it's finished is called **blocking**.
 
 ## millis(): a clock that never stops
 
 `millis()` returns the number of milliseconds since the board started. It keeps counting in the background no matter what your code is doing, and returns an `unsigned long`.
 
-Instead of waiting, you can *check the clock* and only act when enough time has passed:
+Instead of waiting, you can *check the clock* and only act when enough time has passed (`>=` means "greater than or equal to"):
 
 ```cpp try
 const int ledPin = 13;
@@ -70,10 +70,10 @@ That would be very awkward with `delay()`.
 
 ## Why "now − last ≥ interval"
 
-`millis()` counts in an `unsigned long`, which runs out after about 49.7 days and wraps back to 0. Writing the check as `now - lastToggle >= interval` keeps working across that wrap, because unsigned subtraction wraps the same way. Writing `now >= lastToggle + interval` does not. Always subtract.
+`millis()` counts in an `unsigned long`, which runs out after about 49.7 days and **rolls over** (wraps back to 0, like the counter overflow in *Variables and Types*). Writing the check as `now - lastToggle >= interval` keeps working across that wrap, because unsigned subtraction wraps the same way. Writing `now >= lastToggle + interval` does not. Always subtract.
 
 > [!NOTE]
-> How does `millis()` keep counting while your code runs? A hardware timer inside the chip ticks along on its own and interrupts the CPU about once a millisecond to update the count. You will see exactly how in *Timers and Interrupts*. EEXPO emulates that timer, which is why `millis()` and `delay()` work in the emulator.
+> How does `millis()` keep counting while your code runs? A **hardware timer** (a counting circuit built into the chip) ticks along on its own and **interrupts** the CPU about once a millisecond: it briefly pauses your code to run a tiny job that updates the count, then lets your code carry on. You will see exactly how in *Timers and Interrupts*. Ohmster emulates that timer, which is why `millis()` and `delay()` work in the emulator.
 
 ## Key ideas
 

@@ -21,7 +21,7 @@ Open it in the editor and compile it, but don't run it yet.
 
 ## What the compiler produced
 
-Here is the heart of Blink after compiling, exactly as avr-gcc built it for the Uno. The addresses on the left are byte addresses in flash.
+Here is the heart of Blink after compiling, written as assembly, exactly as avr-gcc built it for the Uno. Turning machine code back into assembly like this is called **disassembly**. The addresses on the left are byte addresses in flash, and `.-24` means "jump back 24 bytes from here".
 
 ```asm
 037a:   ldi   r24, 0x01            ; val = HIGH
@@ -48,9 +48,9 @@ Some of this is exactly what you would expect, and some of it is the compiler be
 
 **Where are setup() and loop()?** Arduino builds with *link-time optimization*, which lets the compiler see the whole program at once. Since `setup()` and `loop()` are each called from one place, it pasted their code straight into `main()` (this is called **inlining**) and saved a call and return on every pass.
 
-**Where did the pin number go?** Every `digitalWrite` in this sketch uses pin 13, and every `delay` uses 500. So the compiler made special copies of both functions with those values built in. That's what `.constprop` (constant propagation) means in their names. `digitalWrite.constprop.0` only needs the value, in R24, and `delay.constprop.1` needs no arguments at all. In a sketch that called them with different values, you would see the full calling convention: the pin in R24 and the value in R22 for `digitalWrite`, and the 4-byte time in R22 to R25 for `delay`.
+**Where did the pin number go?** Every `digitalWrite` in this sketch uses pin 13, and every `delay` uses 500. So the compiler made special copies of both functions with those values built in. That's what `.constprop` (**constant propagation**: spotting values that never change and building them in) means in their names. `digitalWrite.constprop.0` only needs the value, in R24, and `delay.constprop.1` needs no arguments at all. In a sketch that called them with different values, you would see the full calling convention: the pin in R24 and the value in R22 for `digitalWrite`, and the 4-byte time in R22 to R25 for `delay`.
 
-**What is sbiw r28 for?** The real `main()` does one more thing on every pass: `if (serialEventRun) serialEventRun();`. R28:R29 holds that function's address, which is 0 because this sketch doesn't use Serial. `SBIW r28, 0` subtracts zero just to set the Z flag, and `BREQ` skips the call when the address is zero.
+**What is sbiw r28 for?** The real `main()` does one more thing on every pass: `if (serialEventRun) serialEventRun();`. R28:R29 holds that function's address, which is 0 because this sketch doesn't use Serial (the USB text connection from *A Tour of the Board*). `SBIW r28, 0` (subtract from a register pair) subtracts zero just to set the Z flag, and `BREQ` skips the call when the address is zero.
 
 > [!NOTE]
 > Your build may not match these addresses exactly, since a different sketch or compiler version moves things around. The debugger's Program list shows exactly what yours compiled to, with each instruction matched to its line in your sketch.
@@ -59,7 +59,7 @@ Some of this is exactly what you would expect, and some of it is the compiler be
 
 Follow the call into `digitalWrite.constprop.0` and you will find:
 
-1. Three `LPM` (load from program memory) instructions read lookup tables stored in flash: which timer pin 13 uses, its bit mask (`0x20`, bit 5), and which port it is on.
+1. Three `LPM` (load from program memory) instructions read **lookup tables** stored in flash (lists of facts about each pin, looked up by pin number): which timer pin 13 uses, its bit mask (`0x20`, bit 5), and which port it is on.
 2. A series of compares and branches checks whether a PWM timer needs switching off first.
 3. `IN r18, 0x3F` saves SREG, and `CLI` turns off interrupts.
 4. `LD` reads PORTB, the bit is set or cleared, and `ST` writes it back. **This is the instruction that changes the pin.**

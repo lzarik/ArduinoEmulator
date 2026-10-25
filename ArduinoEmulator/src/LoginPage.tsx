@@ -1,6 +1,8 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { ArduinoBoard } from './ArduinoBoard'
-import { HeroRig } from './HeroRig'
+import { HamsterWheel } from './HamsterWheel'
+import { HeroWordmark } from './HeroWordmark'
+import { TeamSection } from './TeamSection'
 
 interface Props {
   onLogin: () => void
@@ -47,7 +49,7 @@ function AuthForm({ mode, onModeChange, onSubmit }: AuthFormProps) {
               setError('')
             }}
           >
-            {m === 'signin' ? 'Sign In' : 'Create Account'}
+            {m === 'signin' ? 'Log In' : 'Sign Up'}
           </button>
         ))}
       </div>
@@ -96,7 +98,7 @@ function AuthForm({ mode, onModeChange, onSubmit }: AuthFormProps) {
         {error && <div className="auth-error" role="alert">{error}</div>}
 
         <button type="submit" className="landing-btn primary auth-submit">
-          {mode === 'signin' ? 'Sign In' : 'Create Account'}
+          {mode === 'signin' ? 'Log In' : 'Sign Up'}
         </button>
       </form>
     </div>
@@ -120,7 +122,7 @@ function AuthModal({ mode, onModeChange, onSubmit, onClose }: AuthModalProps) {
         className="auth-dialog"
         role="dialog"
         aria-modal="true"
-        aria-label={mode === 'signin' ? 'Sign In' : 'Create Account'}
+        aria-label={mode === 'signin' ? 'Log In' : 'Sign Up'}
       >
         <button type="button" className="auth-close" aria-label="Close" onClick={onClose}>
           ×
@@ -131,33 +133,30 @@ function AuthModal({ mode, onModeChange, onSubmit, onClose }: AuthModalProps) {
   )
 }
 
-// The two E's are drawn in the accent color, the rest of the name in white.
+// "Ohm" is drawn in the accent color, the rest of the name in white.
 function BrandName() {
   return (
     <>
-      <span className="brand-e">EE</span>XPO
+      <span className="brand-ohm">Ohm</span>ster
     </>
   )
 }
 
 // Splash page sections, in scroll order. Mission, Features and How It Works are reserved for your
-// own writing and start empty.
+// own writing and start empty. Meet the Team lists the people in team.ts.
 const SPLASH_SECTIONS = [
-  { id: 'what', title: 'What is EEXPO' },
+  { id: 'what', title: 'What is Ohmster' },
   { id: 'about', title: 'About' },
   { id: 'mission', title: 'Mission' },
   { id: 'features', title: 'Features' },
   { id: 'how', title: 'How It Works' },
-  { id: 'start', title: 'Get Started' },
+  { id: 'team', title: 'Meet the Team' },
 ]
 
 // Length of the opening sequence (title, then the notebook swinging up to face the camera), and of the
 // dive into its label that fades into the splash page. The keyframes in App.css are timed against these.
 const INTRO_MS = 4600
 const DIVE_MS = 1300
-// When the hero's board has landed and been wired up and "powers on" (its LEDs light up and the e-ink
-// display refreshes), measured from the start of the dive. Matches the hero entrance timing in App.css.
-const POWER_ON_MS = 3000
 
 const prefersReducedMotion = () => window.matchMedia('(prefers-reduced-motion: reduce)').matches
 
@@ -180,7 +179,7 @@ function Cover() {
       <span className="cover-corner cover-corner-bottom" />
       <div className="cover-label">
         <div className="cover-name">
-          <span className="cover-name-e">EE</span>XPO
+          <span className="cover-name-ohm">Ohm</span>ster
         </div>
         <div className="cover-sub">Engineering Notebook</div>
       </div>
@@ -197,10 +196,10 @@ function IntroTitle() {
   return (
     <div className="intro-cam intro-title-cam" aria-hidden="true">
       <div className="intro-title">
-        {'EEXPO'.split('').map((ch, i) => (
+        {'Ohmster'.split('').map((ch, i) => (
           <span
             key={i}
-            className={`intro-letter${i < 2 ? ' intro-letter-e' : ''}`}
+            className={`intro-letter${i < 3 ? ' intro-letter-ohm' : ''}`}
             style={{ animationDelay: `${0.25 + i * 0.11}s, ${1.2 + i * 0.09}s` }}
           >
             {ch}
@@ -301,12 +300,12 @@ function AboutDiagram() {
   )
 }
 
-function WhatIsEexpo() {
+function WhatIsOhmster() {
   return (
     <div className="notebook-text">
       <p>
         <span className="brand-name">
-          <span className="cover-name-e">EE</span>XPO
+          <span className="cover-name-ohm">Ohm</span>ster
         </span>{' '}
         is a free tool designed for aspiring engineers who want to learn more about Electrical Engineering as a
         whole. This tool provides lessons on Electrical Engineering fundamentals and displays the underlying magic of
@@ -326,10 +325,8 @@ export function LoginPage({ onLogin, onSignInIntent }: Props) {
   const [activeSection, setActiveSection] = useState('')
   // Bumped each time the About section scrolls into view, to replay its animation.
   const [aboutVisit, setAboutVisit] = useState(0)
-  const [powered, setPowered] = useState(false)
   const pageRef = useRef<HTMLDivElement>(null)
   const heroRef = useRef<HTMLElement>(null)
-  const pointerFrame = useRef(0)
   const aboutInView = useRef(false)
   const timers = useRef<number[]>([])
 
@@ -351,12 +348,6 @@ export function LoginPage({ onLogin, onSignInIntent }: Props) {
     timers.current.push(id)
     return () => timers.current.forEach(clearTimeout)
   }, [finishIntro])
-
-  useEffect(() => {
-    if (stage === 'intro') return
-    const id = window.setTimeout(() => setPowered(true), prefersReducedMotion() ? 0 : POWER_ON_MS)
-    return () => clearTimeout(id)
-  }, [stage])
 
   // Any key skips the intro.
   useEffect(() => {
@@ -403,18 +394,6 @@ export function LoginPage({ onLogin, onSignInIntent }: Props) {
     return () => cancelAnimationFrame(id)
   }, [stage, handleScroll])
 
-  // The hero's label and board shift a little with the pointer, for depth. One update per frame.
-  const handleHeroPointer = (e: React.PointerEvent<HTMLElement>) => {
-    const hero = e.currentTarget
-    const { clientX, clientY } = e
-    cancelAnimationFrame(pointerFrame.current)
-    pointerFrame.current = requestAnimationFrame(() => {
-      const rect = hero.getBoundingClientRect()
-      hero.style.setProperty('--mx', (((clientX - rect.left) / rect.width) * 2 - 1).toFixed(3))
-      hero.style.setProperty('--my', (((clientY - rect.top) / rect.height) * 2 - 1).toFixed(3))
-    })
-  }
-
   const scrollToSection = (id: string) => {
     document.getElementById(`splash-${id}`)?.scrollIntoView({ behavior: prefersReducedMotion() ? 'auto' : 'smooth', block: 'start' })
   }
@@ -429,21 +408,12 @@ export function LoginPage({ onLogin, onSignInIntent }: Props) {
   const sectionBody = (id: string) => {
     switch (id) {
       case 'what':
-        return <WhatIsEexpo />
+        return <WhatIsOhmster />
       case 'about':
         // Not drawn until the section is first reached: it's a second detailed board drawing
         return aboutVisit > 0 && <AboutDiagram key={aboutVisit} />
-      case 'start':
-        return (
-          <div className="splash-start">
-            <button type="button" className="landing-btn primary" onClick={() => setAuthMode('create')}>
-              Create Account
-            </button>
-            <button type="button" className="landing-btn" onClick={() => setAuthMode('signin')}>
-              Sign In
-            </button>
-          </div>
-        )
+      case 'team':
+        return <TeamSection />
       default:
         return null
     }
@@ -457,11 +427,11 @@ export function LoginPage({ onLogin, onSignInIntent }: Props) {
     >
       <nav className="landing-nav">
         <button type="button" className="nav-brand" onClick={() => pageRef.current?.scrollTo({ top: 0, behavior: 'smooth' })}>
-          <img src="/ArduinoEmulatorIconTrans.png" alt="" />
+          <HamsterWheel className="nav-hamster" />
           <span><BrandName /></span>
         </button>
         <div className="nav-links">
-          {SPLASH_SECTIONS.filter((sec) => sec.id !== 'start').map((sec) => (
+          {SPLASH_SECTIONS.map((sec) => (
             <button
               key={sec.id}
               type="button"
@@ -474,27 +444,29 @@ export function LoginPage({ onLogin, onSignInIntent }: Props) {
         </div>
         <div className="nav-auth">
           <button type="button" className="nav-link" onClick={() => setAuthMode('signin')}>
-            Sign In
+            Log In
           </button>
           <button type="button" className="landing-btn primary small" onClick={() => setAuthMode('create')}>
-            Create Account
+            Sign Up
           </button>
         </div>
       </nav>
 
       <main className="splash">
-        {/* The cover the intro dives into, full screen. Layers, outermost first: scroll parallax,
-            a slow camera drift, pointer parallax, then each element's entrance animation. */}
-        <section
-          ref={heroRef}
-          className={`splash-hero${stage !== 'intro' ? ' enter' : ''}`}
-          data-section=""
-          onPointerMove={handleHeroPointer}
-        >
+        {/* The first screen after the intro: the wordmark (which the intro's dive hands off to), the
+            phrase, and the way in */}
+        <section ref={heroRef} className={`splash-hero${stage !== 'intro' ? ' enter' : ''}`} data-section="">
           <div className="hero-light" />
           <div className="hero-stage">
-            <div className="hero-drift">
-              <HeroRig powered={powered} />
+            <HeroWordmark active={stage !== 'intro'} />
+            <p className="hero-phrase">From blink to bare metal.</p>
+            <div className="hero-actions">
+              <button type="button" className="hero-big primary" onClick={() => setAuthMode('create')}>
+                Sign Up
+              </button>
+              <button type="button" className="hero-big" onClick={() => setAuthMode('signin')}>
+                Log In
+              </button>
             </div>
           </div>
           <button type="button" className="splash-scroll-cue" onClick={() => scrollToSection('what')} aria-label="Scroll down">

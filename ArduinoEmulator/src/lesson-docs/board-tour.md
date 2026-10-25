@@ -6,14 +6,14 @@ The black strips of sockets along the top and bottom edges are **headers**. Each
 
 ### Digital pins 0 to 13
 
-Along the top edge are the **digital pins**, numbered 0 to 13. A digital pin is either **HIGH** (5 volts) or **LOW** (0 volts), nothing in between. Your program decides which.
+Along the top edge are the **digital pins**, numbered 0 to 13. **Digital** means there are only two possible values, like a light switch: on or off. A digital pin is either **HIGH** (5 volts, "on") or **LOW** (0 volts, "off"), nothing in between. Your program decides which. (Volts measure electrical push; *Voltage, Current and Resistance* explains them.)
 
-- Pins marked with a **~** (3, 5, 6, 9, 10 and 11) can also produce PWM, a fast on-off signal used to dim LEDs and control motor speed.
-- Pins **0 and 1** are labelled RX and TX. They are shared with the USB serial connection, so it is best to leave them free.
+- Pins marked with a **~** (3, 5, 6, 9, 10 and 11) can also produce **PWM** (pulse-width modulation): switching the pin on and off hundreds of times a second. An LED flickering that fast looks steady but dimmer, so PWM is how you dim lights and control motor speed.
+- Pins **0 and 1** are labelled **RX** (receive) and **TX** (transmit). They are shared with the board's **serial** connection, the channel it uses to send text back and forth with your computer over USB, so it is best to leave them free.
 
 ### Analog inputs A0 to A5
 
-Along the bottom right are the **analog inputs**. Besides reading HIGH and LOW, these can measure a voltage anywhere between 0 and 5 volts, which is how you read things like a light sensor or a knob. They also work as ordinary digital pins.
+Along the bottom right are the **analog inputs**. **Analog** is the opposite of digital: a value that can be anything in a range, like a dimmer instead of a switch. Besides reading HIGH and LOW, these can measure a voltage anywhere between 0 and 5 volts, which is how you read things like a light sensor or a knob. They also work as ordinary digital pins.
 
 ### Power
 
@@ -23,17 +23,17 @@ Along the bottom left is the **power header**:
 |---|---|
 | 5V | A steady 5 volts, for powering your circuits |
 | 3.3V | A steady 3.3 volts, for parts that need less |
-| GND | Ground: 0 volts. Every circuit must connect back to ground. |
-| VIN | The raw voltage from the barrel jack, if you use one |
-| RESET | Pulling this LOW restarts the program |
+| GND | **Ground**: 0 volts. A **circuit** is a complete loop that electricity flows around, and every circuit must connect back to ground to finish the loop. |
+| VIN | The raw voltage from the **barrel jack** (the round power socket), if you use one |
+| RESET | Connecting this to 0 V (LOW) restarts the program |
 
 > [!TIP]
 > **GND** appears three times on the Uno (twice on the power header and once next to pin 13). They are all the same connection, so use whichever is closest.
 
 ## Everything else
 
-- **USB connector** (the silver box on the left): powers the board and is how programs get uploaded.
-- **Barrel jack** (the black block below it): lets you power the board from a 7 to 12 volt adapter instead of USB.
+- **USB connector** (the silver box on the left): powers the board and is how programs get **uploaded** (copied onto it).
+- **Barrel jack** (the black block below it): lets you power the board from a 7 to 12 volt wall adapter instead of USB.
 - **Reset button**: restarts your program from the beginning. Try clicking it on the board in the Design tab.
 - **The "L" LED**: a tiny LED wired to **pin 13** on the board itself. You can blink it without wiring anything.
 - **The "ON" LED**: lights whenever the board has power.

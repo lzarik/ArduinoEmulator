@@ -1,17 +1,19 @@
-The ATmega328P can't read C++. It only understands **machine code**: numbers that each encode one simple instruction. Every time you press Compile, a chain of tools translates your sketch into those numbers. This lesson follows that chain.
+The ATmega328P can't read C++. It only understands **machine code**: numbers that each encode one simple instruction. Every time you press Compile, a chain of tools (called the **toolchain**) translates your sketch into those numbers. This lesson follows that chain.
 
 ## The toolchain
 
-1. **Preprocess.** The Arduino tools add `#include <Arduino.h>` to the top of your sketch, write function declarations for you, and expand every `#define` and `#include`.
+1. **Preprocess.** The Arduino tools tidy up your sketch before translating it. They add `#include <Arduino.h>`, a line that pulls in the Arduino library's list of functions. They write **declarations** for your functions (short notes telling the compiler each function exists). And they expand every `#include` and `#define` (shortcuts that paste in other files or swap one word for another).
 2. **Compile.** The compiler, **avr-g++**, turns each C++ file into AVR machine code. It also optimizes: removing work that isn't needed and choosing fast instructions.
-3. **Link.** The linker joins your code with the **Arduino core**: the library that provides `main()`, `pinMode`, `digitalWrite`, `delay`, `millis` and the rest. It decides where in flash each function will live.
-4. **Output.** The result is an **.elf** file (machine code plus extra information such as function names and which source line each instruction came from) and a **.hex** file (just the bytes to put in flash).
+3. **Link.** The **linker** joins your code with the **Arduino core**: the library that provides `main()`, `pinMode`, `digitalWrite`, `delay`, `millis` and the rest. It decides where in flash each function will live.
+4. **Output.** The result is an **.elf** file (machine code plus extra information such as function names and which line of your code each instruction came from) and a **.hex** file (just the bytes to put in flash).
 
-EEXPO runs this same toolchain. The status pill shows each stage as it runs, and the **Hex file** view in the Code tab shows the result.
+Ohmster runs this same toolchain. The status label at the top of the screen shows each stage as it runs, and the **Hex file** view in the Code tab shows the result.
 
 ## Inside a .hex file
 
-A .hex file is plain text in the **Intel HEX** format. Here is the first line of a compiled Blink:
+Machine code is almost always written in **hexadecimal** (hex for short): counting in 16s instead of 10s. Hex uses the digits 0 to 9 and then the letters A to F for 10 to 15. So hex `10` means 16, `1F` means 31, and `FF` means 255, the biggest number one byte can hold. Two hex digits always make exactly one byte, which is why programmers like it. In this course, a `0x` in front of a number (as in `0x25`) means it's written in hex.
+
+A .hex file is plain text in the **Intel HEX** format, a standard way of writing bytes as text. Here is the first line of a compiled Blink:
 
 ```text
 :100000000C945C000C946E000C946E000C946E00CA
@@ -26,22 +28,22 @@ It breaks down like this:
 | Address | `0000` | Put them at flash address 0 |
 | Type | `00` | A data record |
 | Data | `0C945C00…6E00` | The 16 bytes of machine code |
-| Checksum | `CA` | Lets the loader detect a corrupted line |
+| Checksum | `CA` | Lets the **loader** (the program copying the file onto the chip) detect a damaged line |
 
-Every line of the file is one of these records, filling flash a chunk at a time. The last line, `:00000001FF`, marks the end.
+Every line of the file is one of these **records**, filling flash a chunk at a time. The last line, `:00000001FF`, marks the end.
 
 ## Reading the first instruction
 
-Those first four bytes, `0C 94 5C 00`, are an instruction. AVR stores each 16-bit word with its low byte first, so they read as the two words `940C` and `005C`. That pattern is the **JMP** (jump) instruction, and `005C` is where it jumps to.
+Those first four bytes, `0C 94 5C 00`, are an instruction. AVR instructions are made of **words**: pairs of bytes read together as one 16-bit number. Each word is stored with its low byte (the right-hand half) first, so these bytes read as the two words `940C` and `005C`. That pattern is the **JMP** (jump) instruction, and `005C` is where it jumps to.
 
-Address 0 is where the CPU starts when it is reset, so the very first thing every Arduino program does is jump to the startup code. The next several JMPs form the **interrupt vector table**, a list of where to go when hardware events happen. You will meet it again in *Timers and Interrupts*.
+Address 0 is where the CPU starts when it is reset, so the very first thing every Arduino program does is jump to the startup code. The next several JMPs form the **interrupt vector table**, a list of where to go when hardware events happen (like a timer ticking or a pin changing). You will meet it again in *Timers and Interrupts*.
 
 > [!TIP]
-> Compile any sketch in EEXPO and look at the debugger's **Program** list. Each instruction shows its flash address, its name, and the line of your sketch it came from. Click one to highlight that line in the editor.
+> Compile any sketch in Ohmster and look at the **Program** list in the debugger (the panel on the right of the Code tab). Each instruction shows its flash address, its name, and the line of your sketch it came from. Click one to highlight that line in the editor.
 
 ## Why the core is there
 
-Even an empty sketch compiles to several hundred bytes. That is the Arduino core: startup code that sets up the stack and copies initial values for global variables into RAM, plus `init()`, which configures Timer0 so that `millis()` and `delay()` work. Your own code is usually the smaller part of the program.
+Even an empty sketch compiles to several hundred bytes. That is the Arduino core: startup code that sets up the stack and copies starting values for global variables into RAM, plus `init()`, which sets up Timer0 (the first of the chip's three built-in timers) so that `millis()` and `delay()` work. Your own code is usually the smaller part of the program.
 
 ## Key ideas
 

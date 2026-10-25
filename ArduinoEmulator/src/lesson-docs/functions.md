@@ -14,7 +14,7 @@ void blinkOnce(int pin, int ms)
 
 - `void` is the **return type**. `void` means the function gives nothing back.
 - `blinkOnce` is its **name**.
-- `int pin, int ms` are its **parameters**: values the caller hands in.
+- `int pin, int ms` are its **parameters**: values handed in by the **caller** (the code that calls the function).
 - The block in braces is the **body**: what runs when it is called.
 
 Now `blinkOnce(13, 200);` blinks pin 13 once, fast, and `blinkOnce(12, 1000);` blinks pin 12 slowly.
@@ -34,7 +34,7 @@ Its return type is `bool`, so it can be used anywhere a true/false value fits: `
 
 ## Try it: Morse code
 
-Functions turn a messy sketch into something that reads like a description. This one blinks SOS in Morse code:
+Functions turn a messy sketch into something that reads like a description. This one blinks SOS, the distress signal, in **Morse code**, which spells letters with short flashes (dots) and long flashes (dashes). In the code, `*` means multiply:
 
 ```cpp try
 const int ledPin = 13;
@@ -77,9 +77,9 @@ void loop()
 
 ## What a call does inside the chip
 
-When the CPU reaches `dot();` it has to jump to `dot`'s code, run it, and then come back to exactly where it left off. To come back, it needs to remember where it was. It saves that **return address** on the **stack**, an area at the top of RAM, then jumps. At the end of `dot`, a return instruction takes the address back off the stack and jumps there.
+When the CPU reaches `dot();` it has to jump to `dot`'s code, run it, and then come back to exactly where it left off. To come back, it needs to remember where it was. It saves that **return address** on the **stack**, an area at the top of RAM (the chip's working memory, the SRAM from the first lesson), then jumps. The stack works like a stack of plates: the last thing put on is the first thing taken off. At the end of `dot`, a return instruction takes the address back off the stack and jumps there.
 
-Parameters travel in the CPU's registers. You will see both in action in the final unit, where you can watch the stack pointer drop by two bytes on every call in EEXPO's debugger.
+Parameters travel in the CPU's registers. You will see both in action in the final unit, where you can watch the **stack pointer** (a register that keeps track of the top of the stack) drop by two bytes on every call in Ohmster's **debugger**, the panel in the Code tab that shows what's happening inside the chip.
 
 ## Key ideas
 

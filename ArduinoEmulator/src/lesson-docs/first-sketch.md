@@ -2,7 +2,7 @@ Every Arduino journey starts the same way: making an LED blink. It sounds small,
 
 ## The sketch
 
-An Arduino program is called a **sketch**. Here is Blink:
+An Arduino program is called a **sketch**. Sketches are written in **C++**, a popular programming language. Here is Blink:
 
 ```cpp try
 void setup()
@@ -23,13 +23,15 @@ Press **Open in editor** above to load it, then press **Run**. The L LED on the 
 
 ## Line by line
 
-`void setup()` is a function that runs **once**, when the board starts. Anything that only needs doing once goes here.
+First, one new idea: a **function** is a named chunk of code that does one job. The code between its curly braces `{ }` is what it does. Some functions you write yourself, like `setup` and `loop` here; others come ready-made, like `pinMode` and `digitalWrite`. To use (or **call**) a function, you write its name followed by brackets, and put any information it needs inside the brackets.
 
-`pinMode(13, OUTPUT);` tells the chip that pin 13 is an **output**: the chip will drive it, rather than listen to it. Pins start out as inputs, so this line is essential.
+`void setup()` is a function that runs **once**, when the board starts. Anything that only needs doing once goes here. (`void` just means the function doesn't hand back an answer; you'll see why that matters in *Functions*.)
+
+`pinMode(13, OUTPUT);` tells the chip that pin 13 is an **output**: the chip will **drive** it (set its voltage itself), rather than listen to it. Pins start out as **inputs**, which only listen, so this line is essential.
 
 `void loop()` is a function that runs **again and again, forever**, right after `setup()` finishes.
 
-`digitalWrite(13, HIGH);` sets pin 13 to **HIGH**, 5 volts. Current flows through the LED and it lights.
+`digitalWrite(13, HIGH);` sets pin 13 to **HIGH**, 5 volts. **Current** (electricity moving through a wire) flows through the LED and it lights.
 
 `delay(500);` pauses the program for 500 **milliseconds** (half a second). The LED stays on while the chip waits.
 
@@ -38,13 +40,13 @@ Press **Open in editor** above to load it, then press **Run**. The L LED on the 
 `delay(500);` waits another half second. Then `loop()` ends and immediately starts again.
 
 > [!NOTE]
-> Every statement ends with a semicolon `;`. Forgetting one is the most common compile error, and the compiler's message will point at the line *after* the missing semicolon.
+> Each instruction in your code is called a **statement**, and every statement ends with a semicolon `;`. Forgetting one is the most common **compile error** (a mistake that stops your code from being translated), and the error message will point at the line *after* the missing semicolon.
 
 ## What happened when you pressed Run
 
-1. **Compile.** Your C++ was turned into AVR machine code: the binary instructions the ATmega328P understands. The status pill shows each stage as it happens.
+1. **Compile.** Your C++ was translated into machine code: instructions written in **binary** (all 0s and 1s), the only thing the ATmega328P understands. The status label at the top of the screen shows each stage as it happens.
 2. **Load.** The machine code was placed in the emulated chip's flash memory.
-3. **Run.** The emulated CPU started executing instructions from address 0, at 16 million instructions per second, just like real hardware.
+3. **Run.** The emulated CPU started carrying out instructions from **address** 0 (every spot in memory has a number, called its address, and 0 is the very first one), at 16 million instructions per second, just like real hardware.
 
 ## Make it yours
 

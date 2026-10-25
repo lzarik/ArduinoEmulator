@@ -1,4 +1,4 @@
-A breadboard lets you build circuits without soldering. You push parts and wires into its holes, and metal strips hidden underneath connect them. Once you know which holes are connected, you can build almost anything.
+A breadboard lets you build circuits without **soldering** (joining parts permanently with melted metal). You push parts and wires into its holes, and metal strips hidden underneath connect them. Once you know which holes are connected, you can build almost anything.
 
 ## Strips of five
 
@@ -9,11 +9,11 @@ The middle of a breadboard is made of short metal strips, each joining **five ho
 So two parts are connected when one leg of each sits in the same strip. That is all a breadboard does.
 
 > [!NOTE]
-> Breadboards are often pictured turned the other way, so many guides call these strips "rows". Rows or columns, it is always a group of five on one side of the gap. EEXPO's bench is laid out like the diagram above.
+> Breadboards are often pictured turned the other way, so many guides call these strips "rows". Rows or columns, it is always a group of five on one side of the gap. Ohmster's bench is laid out like the diagram above.
 
 ## The center gap
 
-The gap down the middle separates the two halves. Chips and push buttons straddle it, so each of their pins lands in its own strip and none of them are shorted together.
+The gap down the middle separates the two halves. Chips and push buttons **straddle** it (sit across it, with legs on both sides), so each of their pins lands in its own strip and none of them are **shorted** together (accidentally connected to each other).
 
 ## Power rails
 
@@ -26,7 +26,7 @@ Now any part can get 5 V or ground from the nearest hole on the rail, instead of
 
 ## Building the LED circuit
 
-Here is how the starter circuit in EEXPO is laid out:
+Here is how the starter circuit in Ohmster is laid out:
 
 1. A wire runs from **pin 13** to column 14.
 2. The LED's **anode** sits in column 14, and its **cathode** in column 15.
@@ -38,9 +38,9 @@ Follow it and you find one unbroken path: pin 13 → LED → resistor → GND.
 > [!WARNING]
 > The classic mistake is putting **both legs of a part in the same strip**. The strip connects them together, so current goes around the part instead of through it. If an LED won't light, check this first.
 
-## Wiring in EEXPO
+## Wiring in Ohmster
 
-In the Design tab, pick a part from the palette and click a hole to place it. To add a wire, click a hole, rail or header socket to start it, then click where it should end. Hovering over any hole shows its name (such as "14a") in the hint bar, which helps when you are following a circuit.
+In the Design tab, pick a part from the parts panel at the top and click a hole to place it. To add a wire, click a hole, a rail, or one of the Arduino's header sockets to start it, then click where it should end. Hovering over any hole shows its name (such as "14a") in the hint at the bottom of the bench, which helps when you are following a circuit.
 
 ## Key ideas
 

@@ -2,17 +2,17 @@ So far the Arduino has only been talking. Now it listens. A push button is the s
 
 ## Reading a pin
 
-`digitalRead(pin)` looks at the voltage on a pin and returns **HIGH** if it is near 5 V or **LOW** if it is near 0 V. To use it, the pin has to be set up as an input, which is the default.
+`digitalRead(pin)` looks at the voltage on a pin and **returns** (gives back as its answer) **HIGH** if it is near 5 V or **LOW** if it is near 0 V. To use it, the pin has to be set up as an input, which is the default.
 
 ## The floating pin problem
 
-You might try wiring a button between a pin and 5V: pressed, the pin connects to 5 V and reads HIGH. But when the button is *not* pressed, the pin isn't connected to anything. It is **floating**, and a floating input picks up stray electrical noise like an antenna. It reads HIGH, then LOW, then HIGH, at random.
+You might try wiring a button between a pin and 5V: pressed, the pin connects to 5 V and reads HIGH. But when the button is *not* pressed, the pin isn't connected to anything. It is **floating**, and a floating input picks up electrical **noise** (tiny random voltages from nearby wires and devices) like an antenna. It reads HIGH, then LOW, then HIGH, at random.
 
 An input needs a definite voltage at all times, pressed or not.
 
 ## Pull-up resistors
 
-The fix is a **pull-up resistor**: a high-value resistor (such as 10 kΩ) from the pin to 5V. With the button wired from the pin to **GND**:
+The fix is a **pull-up resistor**: a resistor with a lot of resistance (such as 10 kΩ, ten thousand ohms) from the pin to 5V. With the button wired from the pin to **GND**:
 
 - **Not pressed:** the resistor gently pulls the pin up to 5 V. It reads **HIGH**.
 - **Pressed:** the button connects the pin straight to GND. That wins over the weak resistor, so the pin reads **LOW**.
@@ -46,10 +46,16 @@ void loop()
 }
 ```
 
-To try it in EEXPO, place a button across the center gap. Wire one of its legs to pin 2 and the leg diagonally across to the GND rail. Run the sketch, then press and hold the button on the bench.
+A few new pieces of code here:
+
+- `const int buttonPin = 2;` gives pin 2 a name, so the code can say `buttonPin` instead of a bare number. `const` means the value never changes.
+- `==` asks "is this equal to that?" (a single `=` means something else, as you'll see in *Conditions and Loops*).
+- `else` holds the code that runs when the `if` condition is false.
+
+To try it in Ohmster, place a button across the center gap. Wire one of its legs to pin 2 and the leg diagonally across to the GND rail. Run the sketch, then press and hold the button on the bench.
 
 > [!NOTE]
-> Pull-ups make pressed read **LOW** and released read **HIGH**. It feels backwards at first. Some people write `bool pressed = digitalRead(buttonPin) == LOW;` so the rest of the code reads naturally.
+> Pull-ups make pressed read **LOW** and released read **HIGH**. It feels backwards at first. Some people write `bool pressed = digitalRead(buttonPin) == LOW;` (a `bool` is a variable that holds either true or false) so the rest of the code reads naturally.
 
 ## Key ideas
 

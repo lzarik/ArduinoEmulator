@@ -1,10 +1,12 @@
 import { useEffect, useRef, useState, type CSSProperties } from 'react'
+import { HamsterWheel } from './HamsterWheel'
 import { COURSE, type Lesson } from './lessons'
 import { lessonDoc } from './lessonDoc'
 import { LessonBody, Quiz } from './LessonDocument'
 
 // The Learn tab: the course drawn as a circuit of LEDs, one per lesson, beside the selected lesson's
 // document. Finishing a lesson's quiz lights its LED, and the trace between two lit LEDs lights too.
+// The circuit is powered by Ohmster's hamster, who runs its wheel each time an LED comes on.
 
 const ALL_LESSONS = COURSE.flatMap((unit, u) => unit.lessons.map((lesson) => ({ ...lesson, unit, unitNumber: u + 1 })))
 const LESSON_INDEX = new Map(ALL_LESSONS.map((l, i) => [l.id, i]))
@@ -76,6 +78,8 @@ export function Learn({ onTryCode }: LearnProps) {
   const [done, setDone] = useState(rememberedDone)
   // The LED that was just lit, so only it plays the switch-on flicker.
   const [justLit, setJustLit] = useState<string | null>(null)
+  const [generating, setGenerating] = useState(false)
+  const generatingTimer = useRef<number | undefined>(undefined)
   const docRef = useRef<HTMLElement>(null)
   const railRef = useRef<HTMLElement>(null)
 
@@ -95,12 +99,17 @@ export function Learn({ onTryCode }: LearnProps) {
     railRef.current?.querySelector('.rail-lesson.active')?.scrollIntoView({ block: 'nearest', behavior: 'smooth' })
   }, [lessonId])
 
+  useEffect(() => () => window.clearTimeout(generatingTimer.current), [])
+
   const complete = () => {
     if (done.has(lesson.id)) return
     const next = new Set(done).add(lesson.id)
     setDone(next)
     setJustLit(lesson.id)
     remember(DONE_KEY, JSON.stringify([...next]))
+    setGenerating(true)
+    window.clearTimeout(generatingTimer.current)
+    generatingTimer.current = window.setTimeout(() => setGenerating(false), 2600)
   }
 
   const resetProgress = () => {
@@ -122,7 +131,10 @@ export function Learn({ onTryCode }: LearnProps) {
         </div>
 
         <div className={`rail-power${lit(0) ? ' out-lit' : ''}`} style={{ '--led': COURSE[0].led } as CSSProperties}>
-          <span className="rail-pin">5V</span>
+          <HamsterWheel running={generating} className="rail-hamster" />
+          <span className="rail-power-label">
+            <strong>5V</strong> hamster power
+          </span>
         </div>
 
         {COURSE.map((unit, u) => {

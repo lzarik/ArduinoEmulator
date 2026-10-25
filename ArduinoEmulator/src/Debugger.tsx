@@ -1,6 +1,7 @@
 import { useEffect, useRef } from 'react'
 import type { CommandInformation, MachineData } from './api'
 import { PORT_ADDR, type PortName } from './circuit'
+import { HamsterWheel } from './HamsterWheel'
 
 // Right-hand panel: what the CPU is doing right now.
 
@@ -134,12 +135,16 @@ export function Debugger({ commands, position, machine, changedRegisters, cycles
           Program <span className="dbg-count">{commands.length ? `${commands.length} instructions` : ''}</span>
         </div>
         {commands.length === 0 ? (
-          <div className="dbg-empty">Compile your code or load a .hex file to see the program here.</div>
+          <div className="dbg-empty">
+            <HamsterWheel sleeping className="dbg-empty-hamster" />
+            <p>Compile your code or load a .hex file to see the program here.</p>
+          </div>
         ) : (
           <ol className="dbg-program" ref={listRef}>
             {commands.map((c, i) => (
-              <li key={i} className={i === position ? 'current' : ''}>
+              <li key={i} className={i === position ? 'current' : ''} aria-current={i === position ? 'step' : undefined}>
                 <button type="button" onClick={() => onInstructionClick(i)}>
+                  <span className="dbg-prog-marker" aria-hidden="true">{i === position ? '▶' : ''}</span>
                   <span className="dbg-prog-addr">{c.ProgramAddressByte != null ? hex(c.ProgramAddressByte, 4) : i}</span>
                   <span className={`dbg-prog-name${c.CommandName === 'NO COMMAND FOUND' ? ' unknown' : ''}`}>{c.CommandName}</span>
                   <span className="dbg-prog-line">{c.SourceLineNumber != null ? `L${c.SourceLineNumber}` : ''}</span>

@@ -1,4 +1,4 @@
-import type { Project } from './projects'
+import { timeAgo, type Project } from './projects'
 
 // Left-hand menu of saved projects, with a button to start a new one. Collapses to a narrow strip.
 
@@ -11,15 +11,6 @@ interface ProjectsSidebarProps {
   onOpen: (project: Project) => void
   onNew: () => void
   onDelete: (project: Project) => void
-}
-
-const timeAgo = (t: number) => {
-  const minutes = Math.round((Date.now() - t) / 60000)
-  if (minutes < 1) return 'just now'
-  if (minutes < 60) return `${minutes} min ago`
-  const hours = Math.round(minutes / 60)
-  if (hours < 24) return `${hours} h ago`
-  return new Date(t).toLocaleDateString()
 }
 
 export function ProjectsSidebar({ projects, currentId, currentName, collapsed, onToggle, onOpen, onNew, onDelete }: ProjectsSidebarProps) {

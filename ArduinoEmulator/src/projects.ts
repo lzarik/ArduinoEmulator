@@ -28,6 +28,16 @@ void loop()
 }
 `
 
+/** "just now", "5 min ago", "3 h ago", or the date for anything older than a day. */
+export function timeAgo(t: number) {
+  const minutes = Math.round((Date.now() - t) / 60000)
+  if (minutes < 1) return 'just now'
+  if (minutes < 60) return `${minutes} min ago`
+  const hours = Math.round(minutes / 60)
+  if (hours < 24) return `${hours} h ago`
+  return new Date(t).toLocaleDateString()
+}
+
 export function newProject(name = 'Untitled project'): Project {
   return { id: newId(), name, code: BLINK_CODE, circuit: defaultCircuit(), updatedAt: Date.now() }
 }

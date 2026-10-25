@@ -1,7 +1,8 @@
 /* ============================================================
    Emulator workspace (after signing in)
    ============================================================ */
-.wb-app {
+.wb-app,
+.wb-theme {
   --wb-bg: #142130;
   --wb-panel: #1b2a3b;
   --wb-panel-2: #22344a;
@@ -13,7 +14,9 @@
   --wb-accent: #3dbabd;
   --wb-paper: #fbf8ef;
   --wb-ink: #22364d;
+}
 
+.wb-app {
   position: fixed;
   inset: 0;
   display: grid;
@@ -22,7 +25,11 @@
   color: var(--wb-text);
 }
 
-.wb-app button {
+.wb-app[hidden] { display: none; }
+
+.wb-app button,
+.wb-theme button,
+.wb-theme input {
   font-family: inherit;
 }
 
@@ -83,9 +90,32 @@
 }
 
 .wb-brand {
+  display: flex;
+  align-items: center;
+  gap: 8px;
   font-size: 18px;
   font-weight: 900;
   letter-spacing: -0.02em;
+}
+
+/* In the workspace the logo is a button back to the home screen */
+.wb-home {
+  margin-left: -8px;
+  padding: 4px 10px 4px 8px;
+  border: none;
+  border-radius: 8px;
+  background: none;
+  color: var(--wb-text);
+  font-family: inherit;
+  cursor: pointer;
+}
+
+.wb-home:hover { background: rgba(255, 255, 255, 0.06); }
+
+.wb-hamster {
+  width: 30px;
+  height: 30px;
+  flex-shrink: 0;
 }
 
 .wb-project-name {
@@ -582,7 +612,7 @@
 .rail-lesson::after { bottom: 0; height: 50%; }
 .rail-chip::before { top: 0; height: 10px; }
 .rail-chip::after { bottom: 0; height: 10px; }
-.rail-power::after { top: 26px; bottom: 0; }
+.rail-power::after { top: 44px; bottom: 0; }
 .rail-ground::before { top: 0; height: 10px; }
 
 .rail-lesson.in-lit::before,
@@ -595,7 +625,31 @@
   box-shadow: 0 0 6px color-mix(in srgb, var(--led) 70%, transparent);
 }
 
-.rail-power { padding-bottom: 10px; }
+.rail-power {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding-bottom: 10px;
+}
+
+/* The hamster's wheel sits on the trace, as the circuit's power source */
+.rail-hamster {
+  width: 44px;
+  height: 44px;
+  margin-left: calc(var(--trace-x) - 22px);
+  flex-shrink: 0;
+}
+
+.rail-power-label {
+  font-size: 12px;
+  color: var(--wb-faint);
+}
+
+.rail-power-label strong {
+  margin-right: 4px;
+  font-family: var(--font-mono);
+  color: #d9b45a;
+}
 .rail-ground { padding-top: 10px; }
 
 /* A two-pin header standing in for the power and ground connections */
@@ -1204,7 +1258,7 @@
 .code-view {
   min-height: 0;
   display: grid;
-  grid-template-columns: minmax(0, 1fr) 320px;
+  grid-template-columns: minmax(0, 1fr) clamp(380px, 32vw, 460px);
 }
 
 .code-view[hidden],
@@ -1593,12 +1647,12 @@
 .dbg-facts {
   margin: 12px 0 0;
   display: grid;
-  grid-template-columns: 1fr 1fr;
+  grid-template-columns: repeat(3, 1fr);
   gap: 8px 12px;
 }
 
 .dbg-facts dt { font-size: 10.5px; color: var(--wb-faint); }
-.dbg-facts dd { margin: 1px 0 0; font-family: var(--font-mono); font-size: 14px; }
+.dbg-facts dd { margin: 1px 0 0; font-family: var(--font-mono); font-size: 15px; }
 
 .dbg-flags {
   display: grid;
@@ -1628,18 +1682,19 @@
 
 .dbg-registers {
   display: grid;
-  grid-template-columns: repeat(4, 1fr);
+  grid-template-columns: repeat(8, 1fr);
   gap: 4px;
 }
 
 .dbg-reg {
   display: flex;
   justify-content: space-between;
-  padding: 4px 6px;
+  gap: 4px;
+  padding: 4px 5px;
   border-radius: 4px;
   background: var(--wb-bg);
   font-family: var(--font-mono);
-  font-size: 11.5px;
+  font-size: 12px;
 }
 
 .dbg-reg-name { color: var(--wb-faint); }
@@ -1655,7 +1710,7 @@
   width: 100%;
   border-collapse: collapse;
   font-family: var(--font-mono);
-  font-size: 11.5px;
+  font-size: 12.5px;
 }
 
 .dbg-ports th {
@@ -1669,49 +1724,348 @@
 
 .dbg-program-section {
   flex: 1;
-  min-height: 220px;
+  min-height: 180px;
   display: flex;
   flex-direction: column;
   border-bottom: none;
 }
 
-.dbg-empty { font-size: 12.5px; line-height: 1.5; color: var(--wb-dim); }
+.dbg-empty {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 6px;
+  padding: 18px 12px;
+  font-size: 13px;
+  line-height: 1.5;
+  color: var(--wb-dim);
+  text-align: center;
+}
+
+.dbg-empty p { margin: 0; max-width: 260px; }
+.dbg-empty-hamster { width: 84px; height: 84px; opacity: 0.9; }
 
 .dbg-program {
   flex: 1;
   min-height: 0;
   margin: 0 -16px -14px;
-  padding: 0;
+  padding: 4px 0;
   list-style: none;
   overflow-y: auto;
   font-family: var(--font-mono);
-  font-size: 12px;
+  font-size: 13px;
 }
 
 .dbg-program button {
   width: 100%;
   display: grid;
-  grid-template-columns: 48px 1fr auto;
+  grid-template-columns: 14px 56px 1fr auto;
+  align-items: center;
   gap: 8px;
-  padding: 3px 16px;
+  padding: 4px 16px 4px 10px;
   border: none;
-  border-left: 3px solid transparent;
+  border-left: 4px solid transparent;
   border-radius: 0;
   background: none;
   color: var(--wb-dim);
   font-family: var(--font-mono);
-  font-size: 12px;
+  font-size: 13px;
   text-align: left;
 }
 
 .dbg-program button:hover { background: rgba(255, 255, 255, 0.04); }
 
-.dbg-program li.current button {
-  border-left-color: #fde68a;
-  background: rgba(253, 230, 138, 0.12);
-  color: var(--wb-text);
+/* The instruction about to run: a lit amber band with a pointer, so it can't be missed */
+.dbg-program li.current {
+  position: relative;
+  z-index: 1;
 }
+
+.dbg-program li.current button {
+  padding-top: 7px;
+  padding-bottom: 7px;
+  border-left-color: #fde68a;
+  background: linear-gradient(90deg, rgba(253, 230, 138, 0.34), rgba(253, 230, 138, 0.12) 70%);
+  box-shadow:
+    inset 0 1px 0 rgba(253, 230, 138, 0.55),
+    inset 0 -1px 0 rgba(253, 230, 138, 0.55),
+    0 0 18px rgba(253, 230, 138, 0.22);
+  color: #fff7d6;
+  font-size: 14px;
+  font-weight: 700;
+}
+
+.dbg-prog-marker {
+  color: #fde68a;
+  font-size: 11px;
+  text-shadow: 0 0 6px rgba(253, 230, 138, 0.8);
+}
+
+.dbg-program li.current .dbg-prog-addr { color: #fde68a; }
+.dbg-program li.current .dbg-prog-line { color: #8ff3f5; }
 
 .dbg-prog-addr { color: var(--wb-faint); }
 .dbg-prog-name.unknown { color: #fca5a5; }
 .dbg-prog-line { color: var(--wb-accent); }
+
+/* ============================================================
+   Home screen: recent projects, and the new-project dialog
+   ============================================================ */
+.home-screen .wb-header-actions { margin-left: auto; }
+
+/* The home screen is roomier than the workspace: a taller header with a bigger logo and tabs */
+.wb-app.home-screen { grid-template-rows: 68px minmax(0, 1fr); }
+.home-screen .wb-brand { gap: 10px; font-size: 24px; }
+.home-screen .wb-hamster { width: 42px; height: 42px; }
+.home-screen .wb-tabs button { height: 38px; min-width: 120px; font-size: 15px; }
+.home-screen .wb-header-actions .wb-btn { height: 38px; font-size: 14px; }
+
+.home-body {
+  min-height: 0;
+  overflow-y: auto;
+  background:
+    radial-gradient(circle, rgba(255, 255, 255, 0.03) 1px, transparent 1.5px) 0 0 / 18px 18px,
+    var(--wb-bg);
+}
+
+.home-inner {
+  max-width: 1440px;
+  margin: 0 auto;
+  padding: 52px 44px 80px;
+}
+
+.home-head {
+  display: flex;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: 20px;
+  margin-bottom: 36px;
+}
+
+.home-head h1 {
+  margin: 0;
+  font-size: 42px;
+  font-weight: 800;
+  letter-spacing: -0.02em;
+}
+
+.home-head p {
+  margin: 6px 0 0;
+  font-size: 17px;
+  color: var(--wb-dim);
+}
+
+.wb-btn.home-new {
+  height: 54px;
+  padding: 0 28px;
+  border-radius: 10px;
+  font-size: 18px;
+  font-weight: 700;
+}
+
+.home-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(380px, 1fr));
+  gap: 28px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.home-card {
+  position: relative;
+  border: 1px solid var(--wb-line);
+  border-radius: 16px;
+  background: var(--wb-panel);
+  overflow: hidden;
+  transition: transform 0.15s ease, border-color 0.15s ease, box-shadow 0.15s ease;
+}
+
+.home-card:hover {
+  transform: translateY(-3px);
+  border-color: rgba(61, 186, 189, 0.55);
+  box-shadow: 0 12px 30px rgba(0, 0, 0, 0.35);
+}
+
+.home-card-open {
+  display: block;
+  width: 100%;
+  padding: 0;
+  border: none;
+  background: none;
+  color: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+/* A little picture of the project's bench, on the same graph paper as the Design tab. Shaped like the
+   bench drawing (about 2.6:1) so it fills the frame. */
+.home-card-thumb {
+  aspect-ratio: 12 / 5;
+  padding: 10px 14px;
+  box-sizing: border-box;
+  background-color: var(--wb-paper);
+  background-image:
+    linear-gradient(rgba(64, 124, 176, 0.14) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(64, 124, 176, 0.14) 1px, transparent 1px);
+  background-size: 16px 16px;
+  border-bottom: 1px solid var(--wb-line);
+}
+
+.circuit-preview {
+  display: block;
+  width: 100%;
+  height: 100%;
+}
+
+.home-card-body {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  padding: 16px 20px 20px;
+}
+
+.home-card-name {
+  overflow: hidden;
+  font-size: 21px;
+  font-weight: 700;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+.home-card-meta {
+  font-size: 14.5px;
+  color: var(--wb-faint);
+}
+
+.home-card-unsaved { color: #f0b54a; font-weight: 600; }
+
+.home-card-delete {
+  position: absolute;
+  top: 12px;
+  right: 12px;
+  width: 36px;
+  height: 36px;
+  border: none;
+  border-radius: 50%;
+  background: rgba(20, 33, 48, 0.75);
+  color: #fff;
+  font-size: 22px;
+  line-height: 1;
+  opacity: 0;
+  cursor: pointer;
+  transition: opacity 0.15s ease;
+}
+
+.home-card:hover .home-card-delete,
+.home-card-delete:focus-visible { opacity: 1; }
+.home-card-delete:hover { background: #c0392b; }
+
+.home-empty {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  padding: 72px 16px;
+  border: 1.5px dashed var(--wb-line-strong);
+  border-radius: 14px;
+  text-align: center;
+}
+
+.home-empty-hamster { width: 200px; height: 200px; }
+
+.home-empty h2 {
+  margin: 18px 0 6px;
+  font-size: 30px;
+  font-weight: 800;
+}
+
+.home-empty p {
+  margin: 0 0 24px;
+  font-size: 17px;
+  color: var(--wb-dim);
+}
+
+.home-empty .wb-btn {
+  height: 54px;
+  padding: 0 28px;
+  border-radius: 10px;
+  font-size: 18px;
+  font-weight: 700;
+}
+
+/* Learn, opened from the home screen, fills the space under the header */
+.home-screen > .learn { min-height: 0; }
+
+/* New-project dialog */
+.np-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 50;
+  display: grid;
+  place-items: center;
+  padding: 16px;
+  background: rgba(8, 14, 21, 0.6);
+  backdrop-filter: blur(3px);
+  animation: np-fade 0.15s ease;
+}
+
+.np-dialog {
+  width: min(420px, 100%);
+  padding: 24px 24px 20px;
+  border: 1px solid var(--wb-line-strong);
+  border-radius: 14px;
+  background: var(--wb-panel);
+  color: var(--wb-text);
+  box-shadow: 0 24px 60px rgba(0, 0, 0, 0.5);
+  animation: np-rise 0.2s cubic-bezier(0.2, 0.8, 0.2, 1);
+}
+
+.np-hamster { width: 72px; height: 72px; margin: -4px 0 6px; }
+
+.np-dialog h2 {
+  margin: 0 0 16px;
+  font-size: 20px;
+  font-weight: 800;
+}
+
+.np-field {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  font-size: 12.5px;
+  font-weight: 600;
+  color: var(--wb-dim);
+}
+
+.np-field input {
+  height: 40px;
+  padding: 0 12px;
+  border: 1px solid var(--wb-line-strong);
+  border-radius: 8px;
+  background: var(--wb-bg);
+  color: var(--wb-text);
+  font-size: 15px;
+  font-weight: 500;
+}
+
+.np-field input:focus {
+  outline: none;
+  border-color: var(--wb-accent);
+  box-shadow: 0 0 0 3px rgba(61, 186, 189, 0.25);
+}
+
+.np-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  margin-top: 20px;
+}
+
+@keyframes np-fade { from { opacity: 0; } }
+@keyframes np-rise { from { opacity: 0; transform: translateY(10px) scale(0.98); } }
+
+@media (max-width: 640px) {
+  .home-inner { padding: 24px 16px 48px; }
+  .home-head { flex-direction: column; align-items: stretch; }
+  .home-grid { grid-template-columns: minmax(0, 1fr); }
+}

@@ -2,12 +2,12 @@ Every sketch has `setup()` and `loop()`, but where do they come from, and why do
 
 ## There is a main() after all
 
-If you have written C or C++ before, you know programs start in a function called `main()`. Sketches seem to skip it, but the Arduino core library supplies one for you. Simplified, it looks like this:
+In C++, every program starts in a function called `main()`. Sketches seem to skip it, but it's there: the **Arduino core** supplies one for you. (A **library** is ready-made code you can use in your programs, and the Arduino core is the library that comes with every sketch.) Simplified, it looks like this:
 
 ```cpp
 int main()
 {
-  init();        // set up timers so millis() and delay() work
+  init();        // get the chip's timers going, so millis() and delay() work
 
   setup();       // your code, once
 
@@ -17,7 +17,7 @@ int main()
 }
 ```
 
-`for (;;)` is a loop with no condition, so it never ends. That is why `loop()` runs forever. A microcontroller has no operating system to return to, so a program that "finished" would have nowhere to go.
+Anything after `//` on a line is a **comment**: a note for humans that the chip ignores. A **loop** is code that repeats, and `for (;;)` is a loop with no condition for stopping, so it never ends. That is why `loop()` runs forever. Your laptop has an **operating system** (like Windows or macOS) that a finished program goes back to, but a microcontroller has nothing like that, so a program that "finished" would have nowhere to go.
 
 ## What goes where
 
@@ -29,7 +29,9 @@ int main()
 
 ## Variables between loops
 
-Each time `loop()` runs, it starts fresh. A variable declared *inside* it is created and thrown away on every pass. A variable declared *outside* any function, a **global**, keeps its value between passes.
+A **variable** is a named box that holds a value, like a counter. **Declaring** a variable means creating it: `int count = 0;` makes a box called `count` that holds whole numbers (`int` is short for integer) and puts 0 in it.
+
+Each time `loop()` runs (each **pass**), it starts fresh. A variable declared *inside* it is created and thrown away on every pass. A variable declared *outside* any function, a **global**, keeps its value between passes.
 
 This sketch blinks exactly five times and then stops, because `count` survives from one pass of `loop()` to the next:
 
@@ -53,7 +55,7 @@ void loop()
 }
 ```
 
-After the fifth blink `loop()` still runs, millions of times a second, but the `if` is false so it does nothing. The chip never stops running; it just has nothing left to do.
+`if (count < 5)` runs the code in its braces only when the **condition** in the brackets is true, here "count is less than 5". `count = count + 1` adds one to the count. After the fifth blink `loop()` still runs, millions of times a second, but the condition is false so it does nothing. The chip never stops running; it just has nothing left to do.
 
 > [!WARNING]
 > If you moved `int count = 0;` inside `loop()`, it would be reset to 0 on every pass and the LED would blink forever. Where a variable is declared decides how long it lives.

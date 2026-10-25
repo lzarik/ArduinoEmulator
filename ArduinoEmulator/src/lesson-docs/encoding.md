@@ -5,13 +5,13 @@ An instruction like "load the number 32 into register 24" has to fit into 16 bit
 Every instruction word contains:
 
 - An **opcode**: fixed bits that identify the instruction.
-- **Operands**: fields that say which registers, constants or addresses to use.
+- **Operands**: **fields** (groups of bits) that say which registers, constants or addresses to use.
 
-The AVR datasheet writes each instruction's format as a 16-character pattern. Fixed bits are `0` or `1`; letters mark operand fields: `d` for the destination register, `r` for a source register, `K` for a constant, `k` for an address or offset, `A` for an I/O address, `b` for a bit number.
+The AVR datasheet writes each instruction's format as a 16-character pattern. Fixed bits are `0` or `1`; letters mark operand fields: `d` for the destination register (where the result goes), `r` for a source register (where a value comes from), `K` for a constant, `k` for an address or **offset** (a distance to jump, counted from where you are now), `A` for an I/O address, `b` for a bit number.
 
 ## LDI: load immediate
 
-`LDI Rd, K` loads the constant K into register Rd.
+`LDI Rd, K` loads the constant K into register Rd (read `Rd` as "register number d").
 
 ```text
 1110 KKKK dddd KKKK
@@ -22,6 +22,8 @@ The opcode is the top four bits, `1110`. The 8-bit constant is split around a 4-
 Four bits can only count 0 to 15, so `dddd` is the register number **minus 16**. That is why `LDI` only works on R16 to R31: there is no room in the word to name the lower registers.
 
 ### Encoding LDI R24, 0x20
+
+To follow along you need to read binary numbers. Binary works like ordinary numbers, but each place is worth double the one to its right: 1, 2, 4, 8, 16 and so on, instead of 1, 10, 100. So `1000` is 8, and `11000` is 16 + 8 = 24.
 
 - Register 24 → 24 − 16 = 8 → `dddd` = `1000`
 - Constant 0x20 → `0010 0000` → high half `0010`, low half `0000`
@@ -51,13 +53,13 @@ The register fields are split up: one bit of `r` sits next to the opcode. For `A
 
 ## RJMP: relative jump
 
-`RJMP k` jumps forward or backward by k words: PC ← PC + k + 1.
+`RJMP k` jumps forward or backward by k words: PC ← PC + k + 1 (the arrow means "becomes").
 
 ```text
 1100 kkkk kkkk kkkk
 ```
 
-k is a 12-bit signed offset, so it reaches about 2048 words either way. The famous `0xCFFF` is `RJMP` with k = −1: PC ← PC − 1 + 1, a jump to itself. It is an infinite loop in a single word, and avr-gcc puts one at the end of every program.
+k is a 12-bit **signed** offset (signed means it can be negative, for a backward jump), so it reaches about 2048 words either way. The famous `0xCFFF` is `RJMP` with k = −1: PC ← PC − 1 + 1, a jump to itself. It is an **infinite loop** (a loop that never ends) in a single word, and avr-gcc, the compiler, puts one at the end of every program.
 
 ## SBI: set bit in I/O register
 
@@ -88,7 +90,7 @@ Five bits for A means SBI can only reach I/O addresses 0 to 31, the low half of 
 | `CBI A, b` | `1001 1000 AAAA Abbb` | I/O 0–31, bit 0–7 |
 
 > [!TIP]
-> EEXPO's debugger shows the raw bytes of the current instruction under its name. Compile the register-level Blink from *I/O Ports*, find the `SBI` in the Program list, and check that its bytes are `2D 9A`.
+> Ohmster's debugger shows the raw bytes of the current instruction under its name. Compile the register-level Blink from *I/O Ports*, find the `SBI` in the Program list, and check that its bytes are `2D 9A`.
 
 ## Key ideas
 

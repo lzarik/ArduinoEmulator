@@ -8,11 +8,11 @@ pinMode(pin, INPUT);         // the chip listens; the pin floats if unconnected
 pinMode(pin, INPUT_PULLUP);  // the chip listens, with the built-in pull-up on
 ```
 
-Every pin starts as `INPUT` when the board resets.
+Every pin starts as `INPUT` when the board **resets** (restarts).
 
 ## Writing
 
-`digitalWrite(pin, HIGH)` connects an output pin to 5 V inside the chip. `digitalWrite(pin, LOW)` connects it to 0 V. The pin can push current out (when HIGH) or pull current in (when LOW), up to about 20 mA either way.
+`digitalWrite(pin, HIGH)` connects an output pin to 5 V inside the chip. `digitalWrite(pin, LOW)` connects it to 0 V. The pin can push current out (when HIGH, called **sourcing**) or pull current in (when LOW, called **sinking**), up to about 20 mA either way.
 
 That means you can wire an LED two ways:
 
@@ -25,14 +25,14 @@ That means you can wire an LED two ways:
 
 ## HIGH and LOW are just numbers
 
-`HIGH` is defined as `1` and `LOW` as `0`. So you can store a pin's state in a variable, compare it, or flip it with `!`:
+`HIGH` is defined as `1` and `LOW` as `0`. So you can store a pin's state in a variable, compare it, or flip it with `!` (read as "not", it turns 1 into 0 and 0 into 1):
 
 ```cpp
 int state = digitalRead(2);         // 1 or 0
 digitalWrite(13, !digitalRead(13)); // toggle pin 13
 ```
 
-Reading an output pin returns the level it is currently driving, so the second line flips pin 13 every time it runs.
+Reading an output pin returns the level it is currently driving, so the second line **toggles** pin 13 (switches it to the opposite state) every time it runs.
 
 ## Try it: two LEDs taking turns
 
@@ -88,7 +88,9 @@ void loop()
 ```
 
 > [!NOTE]
-> Real button contacts bounce: they make and break contact several times in the first few milliseconds of a press. The short `delay(30)` after a press is a simple way to ignore that bounce.
+> `&&` means "and": both sides must be true. The program only acts when the button *was* up last time (`lastReading == HIGH`) *and* is down now (`reading == LOW`).
+>
+> Inside a button are two metal **contacts** that touch when you press it. Real contacts **bounce**: they make and break contact several times in the first few milliseconds of a press. The short `delay(30)` after a press is a simple way to ignore that bounce.
 
 ## Key ideas
 

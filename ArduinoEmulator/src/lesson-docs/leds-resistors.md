@@ -13,9 +13,9 @@ Wire it backwards and nothing breaks; it just doesn't light.
 
 ## Why an LED needs a resistor
 
-An LED needs a certain voltage across it before it turns on, called its **forward voltage**. It is about 2 V for red and yellow LEDs and about 3 V for green, blue and white.
+The voltage **across** a part means the difference in voltage between its two legs. An LED needs a certain voltage across it before it turns on, called its **forward voltage**. It is about 2 V for red and yellow LEDs and about 3 V for green, blue and white.
 
-Once that voltage is reached, an LED has almost no resistance of its own. Whatever voltage is left over would push an enormous current through it, and a typical LED is only good for about 20 mA. So a **resistor** goes in series with the LED to soak up the leftover voltage and limit the current.
+Once that voltage is reached, an LED has almost no resistance of its own. Whatever voltage is left over would push an enormous current through it, and a typical LED is only good for about 20 mA. So a **resistor** goes **in series** with the LED (one after the other, in a single path; more on that below) to soak up the leftover voltage and limit the current.
 
 ::diagram led-circuit
 
@@ -36,7 +36,7 @@ R = V ÷ I = 3 V ÷ 0.015 A = 200 Ω
 Resistors come in standard values, so round **up** to the next one: **220 Ω**. Rounding up means slightly less current, which is always the safe direction. Anywhere from 220 Ω to 1 kΩ works well for an LED on an Arduino; higher values just make it dimmer.
 
 > [!WARNING]
-> An Arduino pin can supply at most about 40 mA before it is damaged, and 20 mA is the recommended limit. An LED with no resistor will try to draw far more. In EEXPO's Design tab, an LED wired with no resistor in its path catches fire, so you can see the mistake without losing a real part.
+> An Arduino pin can supply at most about 40 mA before it is damaged, and 20 mA is the recommended limit. An LED with no resistor will try to **draw** (pull) far more. In Ohmster's Design tab, an LED wired with no resistor in its path catches fire, so you can see the mistake without losing a real part.
 
 ## Series means one path
 
@@ -44,11 +44,11 @@ Resistors come in standard values, so round **up** to the next one: **220 Ω**. 
 
 ## Try it
 
-The starter circuit in a new EEXPO project already has an LED and a 220 Ω resistor wired to pin 13. Open the Design tab and follow the path: pin 13 → LED → resistor → GND rail. Then try deleting the resistor and adding a wire in its place, and run Blink.
+The starter circuit in a new Ohmster project already has an LED and a 220 Ω resistor wired to pin 13. Open the Design tab and follow the path: pin 13 → LED → resistor → GND rail (the long strip along the breadboard's edge that's connected to GND; the next lesson explains rails). Then try deleting the resistor and adding a wire in its place, and run Blink.
 
 ## Key ideas
 
-- An LED only conducts one way: anode (long leg) to the + side, cathode (short leg, flat edge) to GND.
+- An LED only lets current through one way: anode (long leg) to the + side, cathode (short leg, flat edge) to GND.
 - Once on, an LED barely resists current, so it needs a resistor in series.
 - R = (supply voltage − LED forward voltage) ÷ current. 220 Ω is a good default at 5 V.
 

@@ -7,19 +7,19 @@ An ISA is the contract between software and a processor. It defines:
 - **The instructions**: every operation the CPU can perform, such as add, compare, jump, load.
 - **The registers**: how many there are, how wide they are, and any special roles.
 - **The memory model**: how addresses work and how data is reached.
-- **The encoding**: exactly which bits mean which instruction and which operands.
-- **The side effects**: which flags each instruction changes, and how many cycles it takes.
+- **The encoding**: exactly which bits mean which instruction and which **operands** (the values an instruction works on, such as which registers).
+- **The side effects**: which flags each instruction changes, and how many clock cycles it takes.
 
-A compiler targets an ISA, not a particular chip. Any chip that implements the AVR ISA can run the same machine code, even if its circuits are built completely differently inside. The circuitry that implements an ISA is called the **microarchitecture**. The ISA is *what* the CPU does; the microarchitecture is *how*.
+A compiler **targets** an ISA (produces machine code for it), not a particular chip. Any chip that **implements** the AVR ISA (follows its rules) can run the same machine code, even if its circuits are built completely differently inside. The circuitry that implements an ISA is called the **microarchitecture**. The ISA is *what* the CPU does; the microarchitecture is *how*.
 
 > [!NOTE]
-> This is why EEXPO can run your program: its emulator is a software implementation of the AVR ISA. Feed it the same machine code as a real ATmega328P and it does the same thing, instruction by instruction.
+> This is why Ohmster can run your program: its emulator is a software implementation of the AVR ISA. Feed it the same machine code as a real ATmega328P and it does the same thing, instruction by instruction.
 
 ## The AVR ISA at a glance
 
 | Feature | AVR (ATmega328P) |
 |---|---|
-| Data width | 8 bits: registers and the ALU work on bytes |
+| Data width | 8 bits: registers and the **ALU** (arithmetic logic unit, the part that does the maths) work on bytes |
 | Registers | 32 general-purpose, R0 to R31 |
 | Instruction size | Mostly 16 bits; a few are 32 bits |
 | Style | RISC, load–store |
@@ -31,13 +31,13 @@ A compiler targets an ISA, not a particular chip. Any chip that implements the A
 There are two broad philosophies for designing an ISA:
 
 - **RISC** (Reduced Instruction Set Computer): many simple instructions, each doing one small thing quickly. Only load and store instructions touch memory. AVR, ARM (in nearly every phone) and RISC-V are RISC.
-- **CISC** (Complex Instruction Set Computer): fewer, more powerful instructions that can work on memory directly and take varying amounts of time. Intel and AMD's x86 is the classic CISC.
+- **CISC** (Complex Instruction Set Computer): fewer, more powerful instructions that can work on memory directly and take varying amounts of time. Intel and AMD's x86, the chips in most laptops and desktops, is the classic CISC.
 
 On AVR, `x = x + y` with both variables in SRAM takes four instructions: load x, load y, add, store x. A CISC machine might do it in one or two. RISC wins by keeping every instruction simple enough to finish in a single cycle.
 
 ## The families of instructions
 
-The ATmega328P's datasheet lists 131 instructions, in a handful of families:
+The ATmega328P's **datasheet** (the manufacturer's official manual for the chip) lists 131 instructions, in a handful of families. Each has a short abbreviated name called a **mnemonic**: `ADD` is add, `SUB` subtract, `INC` and `DEC` add or subtract one, `MOV` copy, `LD` and `ST` load and store, `JMP` jump, `BREQ` "branch if equal", and so on. To **branch** is to jump to a different part of the program:
 
 | Family | Examples | What they do |
 |---|---|---|

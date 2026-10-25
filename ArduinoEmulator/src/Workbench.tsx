@@ -476,3 +476,41 @@ export function Workbench({ circuit, onChange, tool, onToolChange, wireColor, st
     </div>
   )
 }
+
+// ---------------------------------------------------------------------------------------------------
+// A still picture of a project's bench (board, breadboard, parts and wires), for project thumbnails.
+
+export const CircuitPreview = memo(function CircuitPreview({ circuit }: { circuit: Circuit }) {
+  const layout = LAYOUTS.wide
+  return (
+    <svg
+      className="circuit-preview"
+      viewBox={`${layout.view.x} ${layout.view.y} ${layout.view.w} ${layout.view.h}`}
+      aria-hidden="true"
+    >
+      <defs>
+        <filter id="wb-shadow" x="-20%" y="-20%" width="140%" height="160%">
+          <feDropShadow dx="0" dy="3" stdDeviation="2.5" floodColor="#000" floodOpacity="0.28" />
+        </filter>
+      </defs>
+      <BoardGroup {...layout.board} ledL={false} activity={false} />
+      <Breadboard layout={layout} />
+      {circuit.parts.map((part) => (
+        <PartGraphic key={part.id} part={part} layout={layout} />
+      ))}
+      {circuit.wires.map((w) => {
+        const from = endpointXY(w.from, layout)
+        const to = endpointXY(w.to, layout)
+        if (!from || !to) return null
+        const d = wirePath(from, to)
+        return (
+          <g key={w.id} className="wire">
+            <path d={d} className="wire-outline" />
+            <path d={d} className="wire-core" stroke={w.color} />
+            <path d={d} className="wire-shine" />
+          </g>
+        )
+      })}
+    </svg>
+  )
+})

@@ -1,4 +1,4 @@
-Programs don't just run top to bottom. They loop, skip, call functions and return. All of that comes down to a few instructions that load a new value into the program counter, plus one data structure: the stack.
+Programs don't just run top to bottom. They loop, skip, call functions and return. All of that comes down to a few instructions that load a new value into the program counter, plus one **data structure** (a way of organising data in memory): the stack.
 
 ## Jumps
 
@@ -8,11 +8,11 @@ Programs don't just run top to bottom. They loop, skip, call functions and retur
 | `JMP k` | 2 words | Anywhere in flash | 3 |
 | `BRxx k` | 1 word | −64 to +63 words, relative | 1, or 2 if taken |
 
-Relative jumps store an offset from the current position instead of a full address, which keeps them to one word. Conditional branches have the shortest reach (their word also has to hold which flag to test), so for far targets the compiler flips the condition and branches over a `JMP`.
+Relative jumps store an offset from the current position instead of a full address, which keeps them to one word. Conditional branches have the shortest reach (their word also has to hold which flag to test). So to reach somewhere far away, the compiler uses a trick: it reverses the test and uses the short branch to skip over a full `JMP`.
 
 ## Calls and returns
 
-A function call has to come back. `CALL` and `RCALL` work like jumps, but first they save the **return address** (the address of the instruction after the call) on the stack. `RET` pops it off the stack into the PC.
+A function call has to come back. `CALL` and `RCALL` (relative call, a shorter one-word version) work like jumps, but first they save the **return address** (the address of the instruction after the call) on the stack. `RET` pops it off the stack into the PC.
 
 On the ATmega328P the PC is 14 bits, so a return address takes **2 bytes** of stack.
 
@@ -26,7 +26,7 @@ The stack pointer starts at `0x08FF`, the top of SRAM. Suppose `loop()` calls `b
 4. `digitalWrite` ends with `RET`: pop two bytes, SP back to 0x08FD, jump back into `blinkOnce`.
 5. `blinkOnce` ends with `RET`: SP back to 0x08FF, jump to `0x00A2` in `loop()`.
 
-Because the last address pushed is the first one popped, nested calls always unwind in the right order. Recursion works the same way, one return address per level, which is also why deep recursion can fill a 2 KB stack quickly.
+Because the last address pushed is the first one popped, **nested** calls (a function calling a function calling another) always unwind back out in the right order. **Recursion** (a function calling itself) works the same way, one return address per level, which is also why deep recursion can fill a 2 KB stack quickly.
 
 ## PUSH and POP
 
@@ -44,7 +44,7 @@ myFunction:
 
 ## The calling convention
 
-So that separately compiled functions can call each other, avr-gcc follows a fixed **calling convention**:
+So that separately compiled functions can call each other, avr-gcc follows a fixed set of rules called the **calling convention**. It says which registers carry each **argument** (a value passed into a function, filling one of its parameters):
 
 | Registers | Role |
 |---|---|
@@ -54,13 +54,13 @@ So that separately compiled functions can call each other, avr-gcc follows a fix
 | R18–R27, R30, R31 | The called function may change these freely |
 | R2–R17, R28, R29 | The called function must save and restore these if it uses them |
 | R1 | Always zero |
-| R0 | Scratch |
+| R0 | Scratch: free for any temporary use |
 
 A 4-byte argument such as an `unsigned long` takes a whole group: `delay(500)` passes 500 in R22 (lowest byte) to R25 (highest byte).
 
 ## Interrupts are surprise calls
 
-An interrupt is a `CALL` the hardware makes on its own: it pushes the PC and jumps to the vector. Since it can happen between any two instructions, the ISR must save and restore every register it touches, *including SREG*, and finish with `RETI`, which also re-enables interrupts.
+An interrupt is a `CALL` the hardware makes on its own: it pushes the PC and jumps to the interrupt's slot in the vector table. Since it can happen between any two instructions, the ISR must save and restore every register it touches, *including SREG*, and finish with `RETI`, which also re-enables interrupts.
 
 ## Key ideas
 
