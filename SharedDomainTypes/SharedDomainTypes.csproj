@@ -6,6 +6,9 @@
     <Nullable>enable</Nullable>
     <EmitCompilerGeneratedFiles>true</EmitCompilerGeneratedFiles>
     <CompilerGeneratedFilesOutputPath>Generated</CompilerGeneratedFilesOutputPath>
+    <!-- Optimised even in Debug: the emulator runs millions of instructions a second and an unoptimised
+         build can't keep up with real time. Remove this to step through instructions in a debugger. -->
+    <Optimize>true</Optimize>
   </PropertyGroup>
 
   <ItemGroup>

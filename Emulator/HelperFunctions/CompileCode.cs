@@ -6,7 +6,8 @@ public class CompileCode
 {
     public sealed record CompileArtifacts(string HexText, byte[] ElfBytes, string ElfFilePath, string SketchFilePath);
 
-    public CompileArtifacts CompileSketch(string sourceCode)
+    /// <param name="onProgress">Receives arduino-cli's progress lines (e.g. "Compiling core...") as they happen.</param>
+    public CompileArtifacts CompileSketch(string sourceCode, Action<string>? onProgress = null)
     {
         if (string.IsNullOrWhiteSpace(sourceCode))
         {
@@ -26,9 +27,11 @@ public class CompileCode
 
         var arduinoCliPath = ResolveArduinoCliPath();
 
+        // --verbose makes arduino-cli announce each build step, which is forwarded as progress.
         var compileResult = RunCommand(
             arduinoCliPath,
-            $"compile --fqbn arduino:avr:uno --output-dir \"{outputDirectory}\" \"{sketchDirectory}\"");
+            $"compile --fqbn arduino:avr:uno {(onProgress != null ? "--verbose " : "")}--output-dir \"{outputDirectory}\" \"{sketchDirectory}\"",
+            onProgress == null ? null : line => { if (IsProgressLine(line)) onProgress(line.Trim()); });
 
         if (compileResult.ExitCode != 0)
         {
@@ -102,7 +105,15 @@ public class CompileCode
             $"Current PATH: '{pathEnvironment}'.");
     }
 
-    private static CommandResult RunCommand(string fileName, string arguments)
+    // Verbose output is mostly long compiler command lines; keep the human-readable step announcements.
+    private static bool IsProgressLine(string line)
+    {
+        var text = line.Trim();
+        if (text.Length == 0 || text.Length > 120 || text.Contains('/') || text.Contains('\\')) return false;
+        return text.EndsWith("...") || text.StartsWith("Sketch uses") || text.StartsWith("Global variables use") || text.StartsWith("Using ");
+    }
+
+    private static CommandResult RunCommand(string fileName, string arguments, Action<string>? onLine = null)
     {
         var startInfo = new ProcessStartInfo
         {
@@ -132,9 +143,18 @@ public class CompileCode
 
         using (process)
         {
-            var stdout = process.StandardOutput.ReadToEnd();
-            var stderr = process.StandardError.ReadToEnd();
+            // Read both streams concurrently, line by line, so progress can be reported as it happens.
+            var stdoutBuilder = new System.Text.StringBuilder();
+            var stderrTask = process.StandardError.ReadToEndAsync();
+            string? line;
+            while ((line = process.StandardOutput.ReadLine()) != null)
+            {
+                stdoutBuilder.AppendLine(line);
+                onLine?.Invoke(line);
+            }
+            var stderr = stderrTask.Result;
             process.WaitForExit();
+            var stdout = stdoutBuilder.ToString();
 
             if (!string.IsNullOrWhiteSpace(stdout))
             {

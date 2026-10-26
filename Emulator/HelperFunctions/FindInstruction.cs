@@ -4,88 +4,57 @@ namespace Emulator;
 
 public class FindInstruction
 {
-    public static Dictionary<int, List<Func<List<byte>, CommandTemplate>>> SixBitOpCodes = new Dictionary<int, List<Func<List<byte>, CommandTemplate>>>()
+    // Every instruction class, tried in order; each checks the full opcode pattern. SEI and CLI come
+    // before BSET and BCLR, which would otherwise match them too.
+    public static readonly List<Func<List<byte>, CommandTemplate>> AllCommands = new()
     {
-        [0b100101] = new List<Func<List<byte>, CommandTemplate>>() { (bytes) => new SEI(bytes), (bytes) => new CLI(bytes), (bytes) => new ADIW(bytes), (bytes) => new DEC(bytes), (bytes) => new COM(bytes), (bytes) => new RET(bytes), (bytes) => new RETI(bytes), (bytes) => new JMP(bytes), (bytes) => new CALL(bytes) },
-        [0b100000] = new List<Func<List<byte>, CommandTemplate>>() { (bytes) => new STY(bytes), (bytes) => new STZ(bytes), (bytes) => new LDY(bytes), (bytes) => new LDZ(bytes) },
-        [0b001001] = new List<Func<List<byte>, CommandTemplate>>() { (bytes) => new EOR(bytes) },
-        [0b001000] = new List<Func<List<byte>, CommandTemplate>>() { (bytes) => new AND(bytes) },
-        [0b001010] = new List<Func<List<byte>, CommandTemplate>>() { (bytes) => new OR(bytes) },
-        [0b100100] = new List<Func<List<byte>, CommandTemplate>>() { (bytes) => new STX(bytes), (bytes) => new STY(bytes), (bytes) => new STZ(bytes), (bytes) => new PUSH(bytes), (bytes) => new LPM(bytes), (bytes) => new LDX(bytes), (bytes) => new LDY(bytes), (bytes) => new LDZ(bytes) },
-        [0b100110] = new List<Func<List<byte>, CommandTemplate>>() { (bytes) => new SBI(bytes) },
-        [0b000001] = new List<Func<List<byte>, CommandTemplate>>() { (bytes) => new CPC(bytes) },
-        [0b000000] = new List<Func<List<byte>, CommandTemplate>>() { (bytes) => new CPC(bytes) },
-        [0b000100] = new List<Func<List<byte>, CommandTemplate>>() { (bytes) => new CPSE(bytes) },
-        [0b000010] = new List<Func<List<byte>, CommandTemplate>>() { (bytes) => new SBC(bytes) },
-        [0b000011] = new List<Func<List<byte>, CommandTemplate>>() { (bytes) => new ADD(bytes) },
-        [0b000111] = new List<Func<List<byte>, CommandTemplate>>() { (bytes) => new ADC(bytes) },
-        [0b111101] = new List<Func<List<byte>, CommandTemplate>>() { (bytes) => new BRBC(bytes) },
-        [0b111100] = new List<Func<List<byte>, CommandTemplate>>() { (bytes) => new BRBS(bytes) },
-    };
-
-    public static Dictionary<int, List<Func<List<byte>, CommandTemplate>>> FiveBitOpCodes = new Dictionary<int, List<Func<List<byte>, CommandTemplate>>>()
-    {
-        [0b10111] = new List<Func<List<byte>, CommandTemplate>>() { (bytes) => new OUT(bytes) },
-        [0b10110] = new List<Func<List<byte>, CommandTemplate>>() { (bytes) => new IN(bytes) },
-    };
-
-    public static Dictionary<int, List<Func<List<byte>, CommandTemplate>>> FourBitOpCodes = new Dictionary<int, List<Func<List<byte>, CommandTemplate>>>()
-    {
-        [0b1110] = new List<Func<List<byte>, CommandTemplate>>() { (bytes) => new LDI(bytes) },
-        [0b1100] = new List<Func<List<byte>, CommandTemplate>>() { (bytes) => new RJMP(bytes) },
-        [0b0100] = new List<Func<List<byte>, CommandTemplate>>() { (bytes) => new SBCI(bytes) },
-        [0b0101] = new List<Func<List<byte>, CommandTemplate>>() { (bytes) => new SUBI(bytes) },
-        [0b0011] = new List<Func<List<byte>, CommandTemplate>>() { (bytes) => new CPI(bytes) },
-        [0b0110] = new List<Func<List<byte>, CommandTemplate>>() { (bytes) => new ORI(bytes) },
-        [0b0111] = new List<Func<List<byte>, CommandTemplate>>() { (bytes) => new ANDI(bytes) }
+        b => new NOP(b), b => new SEI(b), b => new CLI(b), b => new BSET(b), b => new BCLR(b),
+        b => new MOVW(b), b => new MULS(b), b => new MULSU(b),
+        b => new CPC(b), b => new SBC(b), b => new ADD(b), b => new CPSE(b), b => new CP(b), b => new SUB(b), b => new ADC(b),
+        b => new AND(b), b => new EOR(b), b => new OR(b), b => new MOV(b),
+        b => new CPI(b), b => new SBCI(b), b => new SUBI(b), b => new ORI(b), b => new ANDI(b),
+        b => new LDDZ(b), b => new LDDY(b), b => new STDZ(b), b => new STDY(b),
+        b => new LDS(b), b => new LDZ(b), b => new LPM(b), b => new LDY(b), b => new LDX(b), b => new POP(b),
+        b => new STS(b), b => new STZ(b), b => new STY(b), b => new STX(b), b => new PUSH(b),
+        b => new COM(b), b => new NEG(b), b => new SWAP(b), b => new INC(b), b => new ASR(b), b => new LSR(b), b => new ROR(b), b => new DEC(b),
+        b => new JMP(b), b => new CALL(b), b => new IJMP(b), b => new ICALL(b), b => new RET(b), b => new RETI(b),
+        b => new ADIW(b), b => new SBIW(b), b => new CBI(b), b => new SBIC(b), b => new SBI(b), b => new SBIS(b), b => new MUL(b),
+        b => new IN(b), b => new OUT(b), b => new RJMP(b), b => new RCALL(b), b => new LDI(b),
+        b => new BRBS(b), b => new BRBC(b), b => new BLD(b), b => new BST(b), b => new SBRC(b), b => new SBRS(b),
     };
 
     public static CommandTemplate FindCommand(byte dataByte, byte opCodeByte)
     {
-        List<Func<List<byte>, CommandTemplate>>? Commands = new List<Func<List<byte>, CommandTemplate>>();
         // Store bytes in big-endian order: [opCodeByte, dataByte]
         List<byte> commandBytes = new List<byte> { opCodeByte, dataByte };
 
-        if (SixBitOpCodes.TryGetValue(opCodeByte >> 2, out Commands))
+        foreach (var create in AllCommands)
         {
-            foreach (var item in Commands)
+            CommandTemplate command = create(commandBytes);
+            if (command.ConfirmCommand(dataByte, opCodeByte))
             {
-                CommandTemplate command = item(commandBytes);
-                if (command.ConfirmCommand(dataByte, opCodeByte))
-                {
-                    return command;
-                }
-            }
-        }
-        else if (FiveBitOpCodes.TryGetValue(opCodeByte >> 3, out Commands))
-        {
-            foreach (var item in Commands)
-            {
-                CommandTemplate command = item(commandBytes);
-                if (command.ConfirmCommand(dataByte, opCodeByte))
-                {
-                    return command;
-                }
-            }
-        }
-        else if(FourBitOpCodes.TryGetValue(opCodeByte >> 4, out Commands)) // cant be an else because an error is thrown without valid instruction
-        {
-            foreach (var item in Commands)
-            {
-                CommandTemplate command = item(commandBytes);
-                if (command.ConfirmCommand(dataByte, opCodeByte))
-                {
-                    return command;
-                }
+                return command;
             }
         }
 
         return new UnknownCommand(commandBytes);
     }
+
+    public List<CommandInformation> FindAllCommands(string[] hexLines) =>
+        FindAllCommandTemplates(hexLines)
+            .Select(c => new CommandInformation
+            {
+                CommandName = c.Command.Identifier,
+                CommandBytes = c.Command.CommandBytes,
+                ProgramAddressByte = c.ProgramAddressByte,
+            })
+            .ToList();
+
     // Should not send the command themselves, creates complications later 
-    public List<CommandInformation> FindAllCommands(string[] hexLines)
+    /// <summary>Decodes the program, keeping each instruction's command object and byte address.</summary>
+    public List<(CommandTemplate Command, int ProgramAddressByte)> FindAllCommandTemplates(string[] hexLines)
     {
-        List<CommandInformation> commands = new List<CommandInformation>();
+        var commands = new List<(CommandTemplate Command, int ProgramAddressByte)>();
         bool shouldTakeFromNextSpan = false;
         int currentProgramAddressByte = 0;
     
@@ -130,12 +99,7 @@ public class FindInstruction
                     i += 4;
                 }
                 
-                commands.Add(new CommandInformation
-                {
-                    CommandName = command.Identifier,
-                    CommandBytes = command.CommandBytes,
-                    ProgramAddressByte = currentProgramAddressByte,
-                });   
+                commands.Add((command, currentProgramAddressByte));
 
                 currentProgramAddressByte += command.CommandBytes.Count;
             }

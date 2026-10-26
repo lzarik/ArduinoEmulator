@@ -3,58 +3,104 @@ namespace SharedDomainTypes;
 [System.AttributeUsage(System.AttributeTargets.Class)]
 public class GenerateCommandRegistryAttribute : System.Attribute { }
 
+// One class per AVR instruction (ATmega328P). Class names must match Identifier: the generated
+// CommandRegistry is keyed by class name and looked up by the identifier shown in the frontend.
+//
+// CommandBytes are stored high byte first, so the 16-bit opcode is (CommandBytes[0] << 8) | CommandBytes[1].
+// PC counts 16-bit words, as on the real chip; 32-bit instructions (JMP, CALL, LDS, STS) are 2 words.
 public abstract class CommandTemplate
 {
     public List<byte> CommandBytes { get; protected set; }
     public abstract int AdditionalBytesNeeded { get; }
     public abstract string Identifier { get; }
 
+    /// <summary>Base clock cycles. Branches and skips add to MachineData.ExtraCycles when taken.</summary>
+    public virtual int Cycles => 1;
+    public int Words => 1 + AdditionalBytesNeeded / 2;
+
+    /// <summary>Print each executed instruction. Off by default: printing makes a full-speed run crawl.</summary>
+    public static bool TraceToConsole { get; set; }
+
     protected CommandTemplate(List<byte> commandBytes)
     {
         CommandBytes = commandBytes;
     }
 
-    public abstract bool ConfirmCommand(byte dataByte, byte opCodeByte);
+    public bool ConfirmCommand(byte dataByte, byte opCodeByte) => Matches((opCodeByte << 8) | dataByte);
+    protected abstract bool Matches(int opcode);
     public abstract void RunCommand(MachineData program);
+
+    // Operand fields decoded from the opcode. Cached because instructions run millions of times a second.
+    private int opcode = -1;
+    private int secondWord = -1;
+    protected int Opcode => opcode >= 0 ? opcode : (opcode = (CommandBytes[0] << 8) | CommandBytes[1]);
+    protected int SecondWord => secondWord >= 0 ? secondWord : (secondWord = (CommandBytes[2] << 8) | CommandBytes[3]);
+    protected int Rd => (Opcode >> 4) & 0x1F;                     // ddddd: bits 8-4
+    protected int Rr => (Opcode & 0x0F) | ((Opcode >> 5) & 0x10); // rrrrr: bit 9 and bits 3-0
+    protected int RdHigh => 16 + ((Opcode >> 4) & 0x0F);          // R16-R31, for immediate instructions
+    protected int K8 => ((Opcode >> 4) & 0xF0) | (Opcode & 0x0F); // KKKK ---- KKKK
+    protected int IoBitAddress => 0x20 + ((Opcode >> 3) & 0x1F);  // A in SBI/CBI/SBIS/SBIC, as a data address
+    protected int Bit => Opcode & 0x07;
+
+    protected static void Log(string message)
+    {
+        if (TraceToConsole) Console.WriteLine(message);
+    }
+
+    // Interpolated messages ($"ADD R{Rd}, R{Rr}") are only formatted when tracing is on, so a full-speed
+    // run doesn't build millions of strings it throws away.
+    protected static void Log(TraceMessage message)
+    {
+        if (TraceToConsole) Console.WriteLine(message.ToStringAndClear());
+    }
+}
+
+[System.Runtime.CompilerServices.InterpolatedStringHandler]
+public ref struct TraceMessage
+{
+    private System.Runtime.CompilerServices.DefaultInterpolatedStringHandler inner;
+    private readonly bool enabled;
+
+    public TraceMessage(int literalLength, int formattedCount, out bool shouldAppend)
+    {
+        enabled = shouldAppend = CommandTemplate.TraceToConsole;
+        inner = enabled ? new System.Runtime.CompilerServices.DefaultInterpolatedStringHandler(literalLength, formattedCount) : default;
+    }
+
+    public void AppendLiteral(string value) => inner.AppendLiteral(value);
+    public void AppendFormatted<T>(T value) => inner.AppendFormatted(value);
+    public void AppendFormatted<T>(T value, string? format) => inner.AppendFormatted(value, format);
+    public string ToStringAndClear() => enabled ? inner.ToStringAndClear() : string.Empty;
 }
 
 public class UnknownCommand(List<byte> commandBytes) : CommandTemplate(commandBytes)
 {
     public override string Identifier => "NO COMMAND FOUND";
     public override int AdditionalBytesNeeded => 0;
-    public override bool ConfirmCommand(byte dataByte, byte opCodeByte) => false;
-    public override void RunCommand(MachineData program) { }
+    protected override bool Matches(int opcode) => false;
+    public override void RunCommand(MachineData program) =>
+        throw new InvalidOperationException($"Unsupported instruction 0x{Opcode:X4} at word address 0x{program.PC:X4}.");
 }
+
+// ===================================================================================================
+// Arithmetic and logic
+// ===================================================================================================
 
 [GenerateCommandRegistry]
 public class ADD(List<byte> commandBytes) : CommandTemplate(commandBytes)
 {
     public override string Identifier => "ADD";
     public override int AdditionalBytesNeeded => 0;
-    // ADD: Add without Carry
-    // Opcode: 0000 11rd dddd rrrr
-    public override bool ConfirmCommand(byte dataByte, byte opCodeByte) => true;
+    // 0000 11rd dddd rrrr (LSL Rd is ADD Rd, Rd)
+    protected override bool Matches(int op) => (op & 0xFC00) == 0x0C00;
     public override void RunCommand(MachineData program)
     {
-        byte opCodeByte = CommandBytes[0];
-        byte dataByte = CommandBytes[1];
-        
-        byte highRBit = (byte)((opCodeByte >> 1) & 0x1);
-        byte highDBit = (byte)(opCodeByte & 0x1);
-        byte dLow = (byte)((dataByte >> 4) & 0x0F);
-        byte rLow = (byte)(dataByte & 0x0F);
-
-        byte rdIndex = (byte)((highDBit << 4) | dLow);
-        byte rrIndex = (byte)((highRBit << 4) | rLow);
-
-        byte rd = program.DataSpace[rdIndex];
-        byte rr = program.DataSpace[rrIndex];
-        int result = rd + rr;
-
-        program.DataSpace[rdIndex] = (byte)(result & 0xFF);
-
-        Console.WriteLine($"ADD R{rdIndex}, R{rrIndex}");
-        program.PC++;
+        int rd = program.DataSpace[Rd], rr = program.DataSpace[Rr];
+        int result = (rd + rr) & 0xFF;
+        program.DataSpace[Rd] = (byte)result;
+        program.SetAddFlags(rd, rr, result);
+        program.PC += 1;
+        Log($"ADD R{Rd}, R{Rr}");
     }
 }
 
@@ -63,31 +109,34 @@ public class ADC(List<byte> commandBytes) : CommandTemplate(commandBytes)
 {
     public override string Identifier => "ADC";
     public override int AdditionalBytesNeeded => 0;
-    // ADC: Add with Carry
-    // Opcode: 0001 11rd dddd rrrr
-    public override bool ConfirmCommand(byte dataByte, byte opCodeByte) => true;
+    // 0001 11rd dddd rrrr (ROL Rd is ADC Rd, Rd)
+    protected override bool Matches(int op) => (op & 0xFC00) == 0x1C00;
     public override void RunCommand(MachineData program)
     {
-        byte opCodeByte = CommandBytes[0];
-        byte dataByte = CommandBytes[1];
-        
-        byte highRBit = (byte)((opCodeByte >> 1) & 0x1);
-        byte highDBit = (byte)(opCodeByte & 0x1);
-        byte dLow = (byte)((dataByte >> 4) & 0x0F);
-        byte rLow = (byte)(dataByte & 0x0F);
+        int rd = program.DataSpace[Rd], rr = program.DataSpace[Rr];
+        int result = (rd + rr + (program.GetFlag(SregBit.C) ? 1 : 0)) & 0xFF;
+        program.DataSpace[Rd] = (byte)result;
+        program.SetAddFlags(rd, rr, result);
+        program.PC += 1;
+        Log($"ADC R{Rd}, R{Rr}");
+    }
+}
 
-        byte rdIndex = (byte)((highDBit << 4) | dLow);
-        byte rrIndex = (byte)((highRBit << 4) | rLow);
-
-        byte rd = program.DataSpace[rdIndex];
-        byte rr = program.DataSpace[rrIndex];
-        byte carry = (byte)((program.StatusRegister.SREGByte & 0x1) != 0 ? 1 : 0);
-        int result = rd + rr + carry;
-
-        program.DataSpace[rdIndex] = (byte)(result & 0xFF);
-
-        Console.WriteLine($"ADC R{rdIndex}, R{rrIndex}");
-        program.PC++;
+[GenerateCommandRegistry]
+public class SUB(List<byte> commandBytes) : CommandTemplate(commandBytes)
+{
+    public override string Identifier => "SUB";
+    public override int AdditionalBytesNeeded => 0;
+    // 0001 10rd dddd rrrr
+    protected override bool Matches(int op) => (op & 0xFC00) == 0x1800;
+    public override void RunCommand(MachineData program)
+    {
+        int rd = program.DataSpace[Rd], rr = program.DataSpace[Rr];
+        int result = (rd - rr) & 0xFF;
+        program.DataSpace[Rd] = (byte)result;
+        program.SetSubFlags(rd, rr, result, chainZero: false);
+        program.PC += 1;
+        Log($"SUB R{Rd}, R{Rr}");
     }
 }
 
@@ -96,944 +145,16 @@ public class SBC(List<byte> commandBytes) : CommandTemplate(commandBytes)
 {
     public override string Identifier => "SBC";
     public override int AdditionalBytesNeeded => 0;
-    // SBC: Subtract with Carry
-    // Opcode: 0000 10rd dddd rrrr
-    public override bool ConfirmCommand(byte dataByte, byte opCodeByte) => true;
+    // 0000 10rd dddd rrrr
+    protected override bool Matches(int op) => (op & 0xFC00) == 0x0800;
     public override void RunCommand(MachineData program)
     {
-        byte opCodeByte = CommandBytes[0];
-        byte dataByte = CommandBytes[1];
-
-        byte highRBit = (byte)((opCodeByte >> 1) & 0x1);
-        byte highDBit = (byte)(opCodeByte & 0x1);
-        byte dLow = (byte)((dataByte >> 4) & 0x0F);
-        byte rLow = (byte)(dataByte & 0x0F);
-
-        byte rdIndex = (byte)((highDBit << 4) | dLow);
-        byte rrIndex = (byte)((highRBit << 4) | rLow);
-
-        byte rd = program.DataSpace[rdIndex];
-        byte rr = program.DataSpace[rrIndex];
-        byte carry = (byte)((program.StatusRegister.SREGByte & 0x1) != 0 ? 1 : 0);
-        int result = rd - rr - carry;
-
-        program.DataSpace[rdIndex] = (byte)(result & 0xFF);
-
-        Console.WriteLine($"SBC R{rdIndex}, R{rrIndex}");
-        program.PC++;
-    }
-}
-
-[GenerateCommandRegistry]
-public class ADIW(List<byte> commandBytes) : CommandTemplate(commandBytes)
-{
-    public override string Identifier => "ADIW";
-    public override int AdditionalBytesNeeded => 0;
-    // ADIW: Add Immediate to Word
-    // Opcode: 1001 0110 KKdd KKKK
-    // Operates on register pairs: R24:R25, R26:R27, R28:R29, R30:R31
-    public override bool ConfirmCommand(byte dataByte, byte opCodeByte) => (opCodeByte & 0xFE) == 0x96;
-    public override void RunCommand(MachineData program)
-    {
-        byte opCodeByte = CommandBytes[0];
-        byte dataByte = CommandBytes[1];
-        
-        // Extract immediate value K (6 bits)
-        byte kHigh = (byte)((dataByte >> 6) & 0x3);
-        byte kLow = (byte)(dataByte & 0xF);
-        byte k = (byte)((kHigh << 4) | kLow);
-        
-        // Extract register pair index (2 bits)
-        byte d = (byte)((dataByte >> 4) & 0x3);
-        byte rdIndex = (byte)(24 + (d * 2));  // Maps to R24, R26, R28, or R30
-        
-        // Read 16-bit value from register pair (little-endian)
-        ushort rdValue = (ushort)(program.DataSpace[rdIndex] | (program.DataSpace[rdIndex + 1] << 8));
-        ushort result = (ushort)(rdValue + k);
-        
-        // Write back to register pair
-        program.DataSpace[rdIndex] = (byte)(result & 0xFF);
-        program.DataSpace[rdIndex + 1] = (byte)((result >> 8) & 0xFF);
-
-        Console.WriteLine($"ADIW R{rdIndex}:R{rdIndex + 1}, {k}");
-        program.PC++;
-    }
-}
-
-[GenerateCommandRegistry]
-public class AND(List<byte> commandBytes) : CommandTemplate(commandBytes)
-{
-    public override string Identifier => "AND";
-    public override int AdditionalBytesNeeded => 0;
-    // AND: Logical AND
-    // Opcode: 0010 00rd dddd rrrr
-    public override bool ConfirmCommand(byte dataByte, byte opCodeByte) => true;
-    public override void RunCommand(MachineData program)
-    {
-        byte opCodeByte = CommandBytes[0];
-        byte dataByte = CommandBytes[1];
-
-        byte highRBit = (byte)((opCodeByte >> 1) & 0x1);
-        byte highDBit = (byte)(opCodeByte & 0x1);
-        byte dLow = (byte)((dataByte >> 4) & 0x0F);
-        byte rLow = (byte)(dataByte & 0x0F);
-
-        byte rdIndex = (byte)((highDBit << 4) | dLow);
-        byte rrIndex = (byte)((highRBit << 4) | rLow);
-
-        byte result = (byte)(program.DataSpace[rdIndex] & program.DataSpace[rrIndex]);
-        program.DataSpace[rdIndex] = result;
-
-        Console.WriteLine($"AND R{rdIndex}, R{rrIndex}");
-        program.PC++;
-    }
-}
-
-[GenerateCommandRegistry]
-public class BRBC(List<byte> commandBytes) : CommandTemplate(commandBytes)
-{
-    public override string Identifier => "BRBC";
-    public override int AdditionalBytesNeeded => 0;
-    public override bool ConfirmCommand(byte dataByte, byte opCodeByte) => true;
-    public override void RunCommand(MachineData program)
-    {
-        byte sregIndex = (byte)(CommandBytes[0] & 0b111);
-        byte highK = (byte)(CommandBytes[1] & 0b11);
-        byte lowK = (byte)(CommandBytes[0] >> 3);
-        int k = (highK << 5) | lowK;
-        int signedK = (k & 0x40) != 0 ? k - 128 : k;
-        bool bitSet = ((program.StatusRegister.SREGByte >> sregIndex) & 1) != 0;
-        if (!bitSet) { program.PC += signedK + 1; Console.WriteLine($"BRBC {sregIndex}, {signedK + 1}"); }
-        else { program.PC++; Console.WriteLine($"BRBC {sregIndex}, not taken"); }
-    }
-}
-
-[GenerateCommandRegistry]
-public class BRBS(List<byte> commandBytes) : CommandTemplate(commandBytes)
-{
-    public override string Identifier => "BRBS";
-    public override int AdditionalBytesNeeded => 0;
-    public override bool ConfirmCommand(byte dataByte, byte opCodeByte) => true;
-    public override void RunCommand(MachineData program)
-    {
-        byte sregIndex = (byte)(CommandBytes[0] & 0b111);
-        byte highK = (byte)(CommandBytes[1] & 0b11);
-        byte lowK = (byte)(CommandBytes[0] >> 3);
-        int k = (highK << 5) | lowK;
-        int signedK = (k & 0x40) != 0 ? k - 128 : k;
-        bool bitSet = ((program.StatusRegister.SREGByte >> sregIndex) & 1) != 0;
-        if (bitSet) { program.PC += signedK + 1; Console.WriteLine($"BRBS {sregIndex}, {signedK + 1}"); }
-        else { program.PC++; Console.WriteLine($"BRBS {sregIndex}, not taken"); }
-    }
-}
-
-[GenerateCommandRegistry]
-public class CALL(List<byte> commandBytes) : CommandTemplate(commandBytes)
-{
-    public override string Identifier => "CALL";
-    public override int AdditionalBytesNeeded => 2;
-    public override bool ConfirmCommand(byte dataByte, byte opCodeByte) => (((dataByte >> 1) & 0b111) == 0b111) && (((opCodeByte >> 1) & 0b0) == 0b0);
-    public override void RunCommand(MachineData program)
-    {
-        byte opCodeByte = CommandBytes[0];
-        byte dataByte = CommandBytes[1];
-        byte highByte = CommandBytes.Count > 2 ? CommandBytes[2] : (byte)0;
-        byte lowByte = CommandBytes.Count > 3 ? CommandBytes[3] : (byte)0;
-        int address = (byte)(opCodeByte & 1) << 22 | (byte)(dataByte >> 4) << 17 | (byte)(dataByte & 1) << 16 | (highByte << 8) | lowByte;
-        int returnAddress = program.PC + 1; program.PushInt32(returnAddress);
-        program.PC = address;
-        Console.WriteLine($"CALL 0x{address:X6}");
-    }
-}
-
-[GenerateCommandRegistry]
-public class CLI(List<byte> commandBytes) : CommandTemplate(commandBytes)
-{
-    public override string Identifier => "CLI";
-    public override int AdditionalBytesNeeded => 0;
-    public override bool ConfirmCommand(byte dataByte, byte opCodeByte) => opCodeByte == 0x94 && dataByte == 0xf8;
-    public override void RunCommand(MachineData program)
-    {
-        program.StatusRegister.SetBit(7, false);
-        Console.WriteLine("CLI");
-        program.PC++;
-    }
-}
-
-[GenerateCommandRegistry]
-public class COM(List<byte> commandBytes) : CommandTemplate(commandBytes)
-{
-    public override string Identifier => "COM";
-    public override int AdditionalBytesNeeded => 0;
-    // COM: One's Complement
-    // Opcode: 1001 010d dddd 0000
-    public override bool ConfirmCommand(byte dataByte, byte opCodeByte)
-        => (opCodeByte >> 1) == 0b1001010 && (dataByte & 0x0F) == 0x0;
-
-    public override void RunCommand(MachineData program)
-    {
-        byte opCodeByte = CommandBytes[0];
-        byte dataByte = CommandBytes[1];
-
-        byte highDBit = (byte)(opCodeByte & 0x1);
-        byte dLow = (byte)((dataByte >> 4) & 0x0F);
-        byte rdIndex = (byte)((highDBit << 4) | dLow);
-
-        program.DataSpace[rdIndex] = (byte)~program.DataSpace[rdIndex];
-
-        Console.WriteLine($"COM R{rdIndex}");
-        program.PC++;
-    }
-}
-
-[GenerateCommandRegistry]
-public class CPC(List<byte> commandBytes) : CommandTemplate(commandBytes)
-{
-    public override string Identifier => "CPC";
-    public override int AdditionalBytesNeeded => 0;
-    public override bool ConfirmCommand(byte dataByte, byte opCodeByte) => true;
-    public override void RunCommand(MachineData program)
-    {
-        byte opCodeByte = CommandBytes[1];
-        byte dataByte = CommandBytes[0];
-        byte highRBit = (byte)((opCodeByte >> 1) & 0x1);
-        byte highDBit = (byte)(opCodeByte & 0x1);
-        byte dLow = (byte)((dataByte >> 4) & 0x0F);
-        byte rLow = (byte)(dataByte & 0x0F);
-        byte rdIndex = (byte)((highDBit << 4) | dLow);
-        byte rrIndex = (byte)((highRBit << 4) | rLow);
-        byte rdValue = program.DataSpace[rdIndex];
-        byte rrValue = program.DataSpace[rrIndex];
-        const int SREG_ADDR = 0x3F;
-        byte sreg = program.DataSpace[SREG_ADDR];
-        bool prevZ = ((sreg >> 1) & 0x1) != 0;
-        bool carryIn = (sreg & 0x1) != 0;
-        int borrowIn = carryIn ? 1 : 0;
-        int resultInt = rdValue - rrValue - borrowIn;
-        byte result = (byte)resultInt;
-        static byte SetBit(byte value, int bit, bool set) { int mask = 1 << bit; return set ? (byte)(value | mask) : (byte)(value & ~mask); }
-        bool H = ((rdValue & 0x0F) < (((rrValue & 0x0F) + borrowIn) & 0x0F));
-        bool C = (rdValue < (rrValue + borrowIn));
-        bool V = ((((rdValue & ~rrValue & ~result) | (~rdValue & rrValue & result)) & 0x80) != 0);
-        bool N = (result & 0x80) != 0;
-        bool Z = (result == 0) && prevZ;
-        bool S = N ^ V;
-        sreg = SetBit(sreg, 5, H); sreg = SetBit(sreg, 4, S); sreg = SetBit(sreg, 3, V); sreg = SetBit(sreg, 2, N); sreg = SetBit(sreg, 1, Z); sreg = SetBit(sreg, 0, C);
-        program.DataSpace[SREG_ADDR] = sreg;
-        Console.WriteLine($"CPC R{rdIndex}, R{rrIndex}");
-        program.PC++;
-    }
-}
-
-[GenerateCommandRegistry]
-public class CPSE(List<byte> commandBytes) : CommandTemplate(commandBytes)
-{
-    public override string Identifier => "CPSE";
-    public override int AdditionalBytesNeeded => 0;
-    // CPSE: Compare, Skip if Equal
-    // Opcode: 0001 00rd dddd rrrr
-    public override bool ConfirmCommand(byte dataByte, byte opCodeByte) => true;
-    public override void RunCommand(MachineData program)
-    {
-        byte opCodeByte = CommandBytes[0];
-        byte dataByte = CommandBytes[1];
-
-        byte highRBit = (byte)((opCodeByte >> 1) & 0x1);
-        byte highDBit = (byte)(opCodeByte & 0x1);
-        byte dLow = (byte)((dataByte >> 4) & 0x0F);
-        byte rLow = (byte)(dataByte & 0x0F);
-
-        byte rdIndex = (byte)((highDBit << 4) | dLow);
-        byte rrIndex = (byte)((highRBit << 4) | rLow);
-
-        bool equal = program.DataSpace[rdIndex] == program.DataSpace[rrIndex];
-        program.PC += equal ? 2 : 1;
-
-        Console.WriteLine(equal
-            ? $"CPSE R{rdIndex}, R{rrIndex} (skip)"
-            : $"CPSE R{rdIndex}, R{rrIndex}");
-    }
-}
-
-[GenerateCommandRegistry]
-public class CPI(List<byte> commandBytes) : CommandTemplate(commandBytes)
-{
-    public override string Identifier => "CPI";
-    public override int AdditionalBytesNeeded => 0;
-    public override bool ConfirmCommand(byte dataByte, byte opCodeByte) => true;
-    public override void RunCommand(MachineData program)
-    {
-        byte opCodeByte = CommandBytes[0];
-        byte dataByte = CommandBytes[1];
-        byte highK = (byte)(opCodeByte & 0x0F);
-        byte lowK  = (byte)(dataByte & 0x0F);
-        byte dLow  = (byte)((dataByte >> 4) & 0x0F);
-        byte rdIndex = (byte)(dLow + 16);
-        byte K = (byte)((highK << 4) | lowK);
-        byte rdValue = program.DataSpace[rdIndex];
-        int diff = rdValue - K; byte result = (byte)diff;
-        const int SREG_ADDR = 0x3F;
-        byte sreg = program.DataSpace[SREG_ADDR];
-        static byte SetBit(byte value, int bit, bool set) { int mask = 1 << bit; return set ? (byte)(value | mask) : (byte)(value & ~mask); }
-        bool H = (((~rdValue & K) | (K & result) | (~rdValue & result)) & 0x08) != 0;
-        bool V = (((rdValue & ~K & ~result) | (~rdValue & K & result)) & 0x80) != 0;
-        bool N = (result & 0x80) != 0;
-        bool Z = result == 0;
-        bool C = (((~rdValue & K) | (K & result) | (~rdValue & result)) & 0x80) != 0;
-        bool S = N ^ V;
-        sreg = SetBit(sreg, 5, H); sreg = SetBit(sreg, 4, S); sreg = SetBit(sreg, 3, V); sreg = SetBit(sreg, 2, N); sreg = SetBit(sreg, 1, Z); sreg = SetBit(sreg, 0, C);
-        program.DataSpace[SREG_ADDR + 31] = sreg;
-        Console.WriteLine($"CPI R{rdIndex}, 0x{K:X2}");
-        program.PC++;
-    }
-}
-
-[GenerateCommandRegistry]
-public class DEC(List<byte> commandBytes) : CommandTemplate(commandBytes)
-{
-    public override string Identifier => "DEC";
-    public override int AdditionalBytesNeeded => 0;
-    public override bool ConfirmCommand(byte dataByte, byte opCodeByte) => (dataByte & 0xF) == 0xA;
-    public override void RunCommand(MachineData program)
-    {
-        byte opCodeByte = CommandBytes[0];
-        byte dataByte = CommandBytes[1];
-        byte highDBit = (byte)(opCodeByte & 0x1);
-        byte dLow = (byte)((dataByte >> 4) & 0xF);
-        byte rdIndex = (byte)((highDBit << 4) | dLow);
-        byte value = program.DataSpace[rdIndex];
-        program.DataSpace[rdIndex] = (byte)(value - 1);
-        Console.WriteLine($"DEC R{rdIndex}");
-        program.PC++;
-    }
-}
-
-[GenerateCommandRegistry]
-public class EOR(List<byte> commandBytes) : CommandTemplate(commandBytes)
-{
-    public override string Identifier => "EOR";
-    public override int AdditionalBytesNeeded => 0;
-    public override bool ConfirmCommand(byte dataByte, byte opCodeByte) => true;
-    public override void RunCommand(MachineData program)
-    {
-        byte opCodeByte = CommandBytes[0];
-        byte dataByte = CommandBytes[1];
-        byte highR = (byte)((opCodeByte >> 1) & 1);
-        byte highD = (byte)(opCodeByte & 1);
-        byte remainingD = (byte)(dataByte >> 4);
-        byte remainingR = (byte)(dataByte & 0b1111);
-        byte rRegAddress = (byte)((highR << 4) | remainingR);
-        byte dRegAddress = (byte)((highD << 4) | remainingD);
-        program.DataSpace[dRegAddress] = (byte)(program.DataSpace[dRegAddress] ^ program.DataSpace[rRegAddress]);
-        program.PC++;
-        Console.WriteLine($"EOR R{dRegAddress}, R{rRegAddress}");
-    }
-}
-
-[GenerateCommandRegistry]
-public class OR(List<byte> commandBytes) : CommandTemplate(commandBytes)
-{
-    public override string Identifier => "OR";
-    public override int AdditionalBytesNeeded => 0;
-    // OR: Logical OR
-    // Opcode: 0010 10rd dddd rrrr
-    public override bool ConfirmCommand(byte dataByte, byte opCodeByte) => true;
-    public override void RunCommand(MachineData program)
-    {
-        byte opCodeByte = CommandBytes[0];
-        byte dataByte = CommandBytes[1];
-        byte highR = (byte)((opCodeByte >> 1) & 1);
-        byte highD = (byte)(opCodeByte & 1);
-        byte remainingD = (byte)(dataByte >> 4);
-        byte remainingR = (byte)(dataByte & 0b1111);
-        byte rRegAddress = (byte)((highR << 4) | remainingR);
-        byte dRegAddress = (byte)((highD << 4) | remainingD);
-        program.DataSpace[dRegAddress] = (byte)(program.DataSpace[dRegAddress] | program.DataSpace[rRegAddress]);
-        program.PC++;
-        Console.WriteLine($"OR R{dRegAddress}, R{rRegAddress}");
-    }
-}
-
-[GenerateCommandRegistry]
-public class IN(List<byte> commandBytes) : CommandTemplate(commandBytes)
-{
-    public override string Identifier => "IN";
-    public override int AdditionalBytesNeeded => 0;
-    public override bool ConfirmCommand(byte dataByte, byte opCodeByte) => ((opCodeByte >> 3) & 0b1) == 0;
-    public override void RunCommand(MachineData program)
-    {
-        byte opCodeByte = CommandBytes[0];
-        byte dataByte = CommandBytes[1];
-        byte twoHighAABytes = (byte)((opCodeByte >> 1) & 0b11);
-        byte highDByte = (byte)(opCodeByte & 1);
-        byte IOAddress = (byte)((twoHighAABytes << 4) | (dataByte & 0b1111));
-        byte registerAddress = (byte)((highDByte << 4) | (dataByte >> 4));
-        program.DataSpace[registerAddress] = program.DataSpace[IOAddress];
-        Console.WriteLine($"IN R{registerAddress}, {IOAddress}");
-        program.PC++;
-    }
-}
-
-[GenerateCommandRegistry]
-public class JMP(List<byte> commandBytes) : CommandTemplate(commandBytes)
-{
-    public override string Identifier => "JMP";
-    public override int AdditionalBytesNeeded => 2;
-    public override bool ConfirmCommand(byte dataByte, byte opCodeByte) => (dataByte >> 1) == 0b110;
-    public override void RunCommand(MachineData program)
-    {
-        byte opCodeByte = CommandBytes[0];
-        byte dataByte = CommandBytes[1];
-        byte highByte = CommandBytes.Count > 2 ? CommandBytes[2] : (byte)0;
-        byte lowByte = CommandBytes.Count > 3 ? CommandBytes[3] : (byte)0;
-        int address = (byte)(opCodeByte & 1) << 22 | (byte)(dataByte >> 4) << 17 | (byte)(dataByte & 1) << 16 | (highByte << 8) | lowByte;
-        program.PC = address;
-        Console.WriteLine($"JMP 0x{address:X6}");
-    }
-}
-
-[GenerateCommandRegistry]
-public class LDI(List<byte> commandBytes) : CommandTemplate(commandBytes)
-{
-    public override string Identifier => "LDI";
-    public override int AdditionalBytesNeeded => 0;
-    public override bool ConfirmCommand(byte dataByte, byte opCodeByte) => true;
-    public override void RunCommand(MachineData program)
-    {
-        byte opCodeByte = CommandBytes[0];
-        byte dataByte = CommandBytes[1];
-        byte highKBytes = (byte)(opCodeByte & 0b1111);
-        byte lowKBytes = (byte)(dataByte & 0b1111);
-        byte dBytes = (byte)((dataByte >> 4) & 0b1111);
-        dBytes += 16; // R16-R31
-        byte kNumber = (byte)((highKBytes << 4) | lowKBytes);
-        program.DataSpace[dBytes] = kNumber;
-        Console.WriteLine($"LDI R{dBytes}, 0x{kNumber:X2}");
-        program.PC++;
-    }
-}
-
-[GenerateCommandRegistry]
-public class LPM(List<byte> commandBytes) : CommandTemplate(commandBytes)
-{
-    public override string Identifier => "LPM";
-    public override int AdditionalBytesNeeded => 0;
-
-    private enum Variant { None, Z, ZPostInc }
-    private Variant detectedVariant = Variant.None;
-
-    // LPM Rd, Z   : 1001 000d dddd 0100
-    // LPM Rd, Z+  : 1001 000d dddd 0101
-    public override bool ConfirmCommand(byte dataByte, byte opCodeByte)
-    {
-        if ((opCodeByte >> 1) != 0b1001000)
-        {
-            detectedVariant = Variant.None;
-            return false;
-        }
-
-        int lastNibble = dataByte & 0xF;
-        if (lastNibble == 0x4)
-        {
-            detectedVariant = Variant.Z;
-            return true;
-        }
-
-        if (lastNibble == 0x5)
-        {
-            detectedVariant = Variant.ZPostInc;
-            return true;
-        }
-
-        detectedVariant = Variant.None;
-        return false;
-    }
-
-    public override void RunCommand(MachineData program)
-    {
-        int z = (program.DataSpace[31] << 8) | program.DataSpace[30];
-
-        byte highDByte = (byte)(CommandBytes[0] & 0b1);
-        byte lowDBytes = (byte)(CommandBytes[1] >> 4);
-        byte rdIndex = (byte)((highDByte << 4) | lowDBytes);
-
-        switch (detectedVariant)
-        {
-            case Variant.Z:
-                program.DataSpace[rdIndex] = program.DataSpace[z];
-                Console.WriteLine($"LPM R{rdIndex}, Z");
-                break;
-            case Variant.ZPostInc:
-                program.DataSpace[rdIndex] = program.DataSpace[z];
-                z++;
-                program.DataSpace[31] = (byte)(z >> 8);
-                program.DataSpace[30] = (byte)(z & 0xFF);
-                Console.WriteLine($"LPM R{rdIndex}, Z+");
-                break;
-        }
-
-        program.PC++;
-    }
-}
-
-[GenerateCommandRegistry]
-public class LDX(List<byte> commandBytes) : CommandTemplate(commandBytes)
-{
-    public override string Identifier => "LDX";
-    public override int AdditionalBytesNeeded => 0;
-    private enum Variant { None, X, XPostInc, XPreDec }
-    private Variant detectedVariant = Variant.None;
-    public override bool ConfirmCommand(byte dataByte, byte opCodeByte)
-    {
-        int lastNibble = dataByte & 0xF;
-        if (((opCodeByte >> 1) & 0b1) == 0)
-        {
-            if (lastNibble == 0xC) { detectedVariant = Variant.X; return true; }
-            if (lastNibble == 0xD) { detectedVariant = Variant.XPostInc; return true; }
-            if (lastNibble == 0xE) { detectedVariant = Variant.XPreDec; return true; }
-        }
-        detectedVariant = Variant.None;
-        return false;
-    }
-    public override void RunCommand(MachineData program)
-    {
-        int x = (program.DataSpace[27] << 8) | program.DataSpace[26];
-        byte highDByte = (byte)(CommandBytes[0] & 0b1);
-        byte lowDBytes = (byte)(CommandBytes[1] >> 4);
-        byte rdIndex = (byte)((highDByte << 4) | lowDBytes);
-        switch (detectedVariant)
-        {
-            case Variant.X:
-                program.DataSpace[rdIndex] = program.DataSpace[x];
-                Console.WriteLine($"LD R{rdIndex}, X");
-                break;
-            case Variant.XPostInc:
-                program.DataSpace[rdIndex] = program.DataSpace[x];
-                x++;
-                program.DataSpace[27] = (byte)(x >> 8);
-                program.DataSpace[26] = (byte)(x & 0xFF);
-                Console.WriteLine($"LD R{rdIndex}, X+");
-                break;
-            case Variant.XPreDec:
-                x--;
-                program.DataSpace[27] = (byte)(x >> 8);
-                program.DataSpace[26] = (byte)(x & 0xFF);
-                program.DataSpace[rdIndex] = program.DataSpace[x];
-                Console.WriteLine($"LD R{rdIndex}, -X");
-                break;
-        }
-        program.PC++;
-    }
-}
-
-[GenerateCommandRegistry]
-public class LDY(List<byte> commandBytes) : CommandTemplate(commandBytes)
-{
-    public override string Identifier => "LDY";
-    public override int AdditionalBytesNeeded => 0;
-    private enum Variant { None, Y, YPostInc, YPreDec }
-    private Variant detectedVariant = Variant.None;
-    public override bool ConfirmCommand(byte dataByte, byte opCodeByte)
-    {
-        int lastNibble = dataByte & 0xF;
-        if ((opCodeByte >> 1) == 0b1001000 || (opCodeByte >> 1) == 0b1000000)
-        {
-            if (lastNibble == 0x8) { detectedVariant = Variant.Y; return true; }
-            if (lastNibble == 0x9) { detectedVariant = Variant.YPostInc; return true; }
-            if (lastNibble == 0xA) { detectedVariant = Variant.YPreDec; return true; }
-        }
-        detectedVariant = Variant.None;
-        return false;
-    }
-    public override void RunCommand(MachineData program)
-    {
-        int y = (program.DataSpace[29] << 8) | program.DataSpace[28];
-        byte highDByte = (byte)(CommandBytes[0] & 0b1);
-        byte lowDBytes = (byte)(CommandBytes[1] >> 4);
-        byte rdIndex = (byte)((highDByte << 4) | lowDBytes);
-        switch (detectedVariant)
-        {
-            case Variant.Y:
-                program.DataSpace[rdIndex] = program.DataSpace[y];
-                Console.WriteLine($"LD R{rdIndex}, Y");
-                break;
-            case Variant.YPostInc:
-                program.DataSpace[rdIndex] = program.DataSpace[y];
-                y++;
-                program.DataSpace[29] = (byte)(y >> 8);
-                program.DataSpace[28] = (byte)(y & 0xFF);
-                Console.WriteLine($"LD R{rdIndex}, Y+");
-                break;
-            case Variant.YPreDec:
-                y--;
-                program.DataSpace[29] = (byte)(y >> 8);
-                program.DataSpace[28] = (byte)(y & 0xFF);
-                program.DataSpace[rdIndex] = program.DataSpace[y];
-                Console.WriteLine($"LD R{rdIndex}, -Y");
-                break;
-        }
-        program.PC++;
-    }
-}
-
-[GenerateCommandRegistry]
-public class LDZ(List<byte> commandBytes) : CommandTemplate(commandBytes)
-{
-    public override string Identifier => "LDZ";
-    public override int AdditionalBytesNeeded => 0;
-    private enum Variant { None, Z, ZPostInc, ZPreDec }
-    private Variant detectedVariant = Variant.None;
-    public override bool ConfirmCommand(byte dataByte, byte opCodeByte)
-    {
-        int lastNibble = dataByte & 0xF;
-        if ((opCodeByte >> 1) == 0b1001000 || (opCodeByte >> 1) == 0b1000000)
-        {
-            if (lastNibble == 0x0) { detectedVariant = Variant.Z; return true; }
-            if (lastNibble == 0x1) { detectedVariant = Variant.ZPostInc; return true; }
-            if (lastNibble == 0x2) { detectedVariant = Variant.ZPreDec; return true; }
-        }
-        detectedVariant = Variant.None;
-        return false;
-    }
-    public override void RunCommand(MachineData program)
-    {
-        int z = (program.DataSpace[31] << 8) | program.DataSpace[30];
-        byte highDByte = (byte)(CommandBytes[0] & 0b1);
-        byte lowDBytes = (byte)(CommandBytes[1] >> 4);
-        byte rdIndex = (byte)((highDByte << 4) | lowDBytes);
-        switch (detectedVariant)
-        {
-            case Variant.Z:
-                program.DataSpace[rdIndex] = program.DataSpace[z];
-                Console.WriteLine($"LD R{rdIndex}, Z");
-                break;
-            case Variant.ZPostInc:
-                program.DataSpace[rdIndex] = program.DataSpace[z];
-                z++;
-                program.DataSpace[31] = (byte)(z >> 8);
-                program.DataSpace[30] = (byte)(z & 0xFF);
-                Console.WriteLine($"LD R{rdIndex}, Z+");
-                break;
-            case Variant.ZPreDec:
-                z--;
-                program.DataSpace[31] = (byte)(z >> 8);
-                program.DataSpace[30] = (byte)(z & 0xFF);
-                program.DataSpace[rdIndex] = program.DataSpace[z];
-                Console.WriteLine($"LD R{rdIndex}, -Z");
-                break;
-        }
-        program.PC++;
-    }
-}
-
-[GenerateCommandRegistry]
-public class ORI(List<byte> commandBytes) : CommandTemplate(commandBytes)
-{
-    public override string Identifier => "ORI";
-    public override int AdditionalBytesNeeded => 0;
-    public override bool ConfirmCommand(byte dataByte, byte opCodeByte) => true;
-    public override void RunCommand(MachineData program)
-    {
-        byte opCodeByte = CommandBytes[0];
-        byte dataByte = CommandBytes[1];
-        byte highK = (byte)(opCodeByte & 0x0F);
-        byte lowK = (byte)(dataByte & 0x0F);
-        byte dLow = (byte)((dataByte >> 4) & 0x0F);
-        byte rdIndex = (byte)(dLow + 16);
-        byte K = (byte)((highK << 4) | lowK);
-        program.DataSpace[rdIndex] = (byte)(program.DataSpace[rdIndex] | K);
-        Console.WriteLine($"ORI R{rdIndex}, 0x{K:X2}");
-        program.PC++;
-    }
-}
-
-[GenerateCommandRegistry]
-public class ANDI(List<byte> commandBytes) : CommandTemplate(commandBytes)
-{
-    public override string Identifier => "ANDI";
-    public override int AdditionalBytesNeeded => 0;
-    // ANDI: Logical AND with Immediate
-    // Opcode: 0111 KKKK dddd KKKK
-    public override bool ConfirmCommand(byte dataByte, byte opCodeByte) => true;
-    public override void RunCommand(MachineData program)
-    {
-        byte opCodeByte = CommandBytes[0];
-        byte dataByte = CommandBytes[1];
-        byte highK = (byte)(opCodeByte & 0x0F);
-        byte lowK = (byte)(dataByte & 0x0F);
-        byte dLow = (byte)((dataByte >> 4) & 0x0F);
-        byte rdIndex = (byte)(dLow + 16);
-        byte k = (byte)((highK << 4) | lowK);
-        program.DataSpace[rdIndex] = (byte)(program.DataSpace[rdIndex] & k);
-        Console.WriteLine($"ANDI R{rdIndex}, 0x{k:X2}");
-        program.PC++;
-    }
-}
-
-[GenerateCommandRegistry]
-public class OUT(List<byte> commandBytes) : CommandTemplate(commandBytes)
-{
-    public override string Identifier => "OUT";
-    public override int AdditionalBytesNeeded => 0;
-    public override bool ConfirmCommand(byte dataByte, byte opCodeByte) => ((opCodeByte >> 3) & 0b1) == 1;
-    public override void RunCommand(MachineData program)
-    {
-        byte opCodeByte = CommandBytes[0];
-        byte dataByte = CommandBytes[1];
-        byte twoHighAABytes = (byte)((opCodeByte >> 1) & 0b11);
-        byte highRByte = (byte)(opCodeByte & 1);
-        byte IOAddress = (byte)((twoHighAABytes << 4) | (dataByte & 0b1111));
-        byte registerAddress = (byte)((highRByte << 4) | (dataByte >> 4));
-        program.DataSpace[IOAddress + 31] = program.DataSpace[registerAddress];
-        Console.WriteLine($"OUT {IOAddress}, R{registerAddress}");
-        program.PC++;
-    }
-}
-
-[GenerateCommandRegistry]
-public class PUSH(List<byte> commandBytes) : CommandTemplate(commandBytes)
-{
-    public override string Identifier => "PUSH";
-    public override int AdditionalBytesNeeded => 0;
-    public override bool ConfirmCommand(byte dataByte, byte opCodeByte) => (dataByte & 0b1111) == 0b1111;
-    public override void RunCommand(MachineData program)
-    {
-        byte highRByte = (byte)(CommandBytes[0] & 0b1);
-        byte lowRBytes = (byte)(CommandBytes[1] >> 4);
-        byte registerAddress = (byte)((highRByte << 4) | lowRBytes);
-        byte value = program.DataSpace[registerAddress];
-        program.PushByte(value);
-        Console.WriteLine($"PUSH R{registerAddress}");
-        program.PC++;
-    }
-}
-
-[GenerateCommandRegistry]
-public class RET(List<byte> commandBytes) : CommandTemplate(commandBytes)
-{
-    public override string Identifier => "RET";
-    public override int AdditionalBytesNeeded => 0;
-    public override bool ConfirmCommand(byte dataByte, byte opCodeByte) => opCodeByte == 0x95 && dataByte == 0x08;
-    public override void RunCommand(MachineData program)
-    {
-        int returnAddress = program.PopInt32();
-        program.PC = returnAddress;
-        Console.WriteLine("RET");
-    }
-}
-
-[GenerateCommandRegistry]
-public class RETI(List<byte> commandBytes) : CommandTemplate(commandBytes)
-{
-    public override string Identifier => "RETI";
-    public override int AdditionalBytesNeeded => 0;
-    public override bool ConfirmCommand(byte dataByte, byte opCodeByte) => opCodeByte == 0x95 && dataByte == 0x18;
-    public override void RunCommand(MachineData program)
-    {
-        int returnAddress = program.PopInt32();
-        program.StatusRegister.SetBit(7, true);
-        program.PC = returnAddress;
-        Console.WriteLine("RETI");
-    }
-}
-
-[GenerateCommandRegistry]
-public class RJMP(List<byte> commandBytes) : CommandTemplate(commandBytes)
-{
-    public override string Identifier => "RJMP";
-    public override int AdditionalBytesNeeded => 0;
-    public override bool ConfirmCommand(byte dataByte, byte opCodeByte) => true;
-    public override void RunCommand(MachineData program)
-    {
-        byte opCodeByte = CommandBytes[0];
-        byte dataByte = CommandBytes[1];
-        int kNumber = ((opCodeByte & 0x0F) << 8) | dataByte;
-        ThreeNibble threeNibble = kNumber;
-        program.PC += 1 + threeNibble;
-        Console.WriteLine($"RJMP {threeNibble}");
-    }
-}
-
-[GenerateCommandRegistry]
-public class SBI(List<byte> commandBytes) : CommandTemplate(commandBytes)
-{
-    public override string Identifier => "SBI";
-    public override int AdditionalBytesNeeded => 0;
-    public override bool ConfirmCommand(byte dataByte, byte opCodeByte) => opCodeByte == 0x9A;
-    public override void RunCommand(MachineData program)
-    {
-        byte dataByte = CommandBytes[1];
-        byte ioAddress = (byte)((dataByte >> 3) & 0x1F);
-        byte bitIndex  = (byte)(dataByte & 0x07);
-        int ioMemIndex = ioAddress + 31;
-        byte mask = (byte)(1 << bitIndex);
-        program.DataSpace[ioMemIndex] = (byte)(program.DataSpace[ioMemIndex] | mask);
-        Console.WriteLine($"SBI {ioAddress}, {bitIndex}");
-        program.PC++;
-    }
-}
-
-[GenerateCommandRegistry]
-public class SEI(List<byte> commandBytes) : CommandTemplate(commandBytes)
-{
-    public override string Identifier => "SEI";
-    public override int AdditionalBytesNeeded => 0;
-    public override bool ConfirmCommand(byte dataByte, byte opCodeByte) => opCodeByte == 0x94 && dataByte == 0x78;
-    public override void RunCommand(MachineData program)
-    {
-        program.StatusRegister.SetBit(7, true);
-        Console.WriteLine("SEI");
-        program.PC++;
-    }
-}
-
-[GenerateCommandRegistry]
-public class STX(List<byte> commandBytes) : CommandTemplate(commandBytes)
-{
-    public override string Identifier => "STX";
-    public override int AdditionalBytesNeeded => 0;
-    private enum Variant { None, X, XPostInc, XPreDec }
-    private Variant detectedVariant = Variant.None;
-    public override bool ConfirmCommand(byte dataByte, byte opCodeByte)
-    {
-        int lastNibble = dataByte & 0xF;
-        if (((opCodeByte >> 1) & 0b1) == 1)
-        {
-            if (lastNibble == 0xC) { detectedVariant = Variant.X; return true; }
-            if (lastNibble == 0xD) { detectedVariant = Variant.XPostInc; return true; }
-            if (lastNibble == 0xE) { detectedVariant = Variant.XPreDec; return true; }
-        }
-        detectedVariant = Variant.None;
-        return false;
-    }
-    public override void RunCommand(MachineData program)
-    {
-        int x = (program.DataSpace[27] << 8) | program.DataSpace[26];
-        byte highRByte = (byte)(CommandBytes[0] & 0b1);
-        byte lowRBytes = (byte)(CommandBytes[1] >> 4);
-        byte registerAddress = (byte)((highRByte << 4) | lowRBytes);
-        switch (detectedVariant)
-        {
-            case Variant.X:
-                program.DataSpace[x] = program.DataSpace[registerAddress];
-                Console.WriteLine($"ST X, R{registerAddress}");
-                break;
-            case Variant.XPostInc:
-                program.DataSpace[x] = program.DataSpace[registerAddress];
-                x++;
-                program.DataSpace[27] = (byte)(x >> 8);
-                program.DataSpace[26] = (byte)(x & 0xFF);
-                Console.WriteLine($"ST X+, R{registerAddress}");
-                break;
-            case Variant.XPreDec:
-                x--;
-                program.DataSpace[27] = (byte)(x >> 8);
-                program.DataSpace[26] = (byte)(x & 0xFF);
-                program.DataSpace[x] = program.DataSpace[registerAddress];
-                Console.WriteLine($"ST -X, R{registerAddress}");
-                break;
-        }
-        program.PC++;
-    }
-}
-
-[GenerateCommandRegistry]
-public class STY(List<byte> commandBytes) : CommandTemplate(commandBytes)
-{
-    public override string Identifier => "STY";
-    public override int AdditionalBytesNeeded => 0;
-    private enum Variant { None, Y, YPostInc, YPreDec }
-    private Variant detectedVariant = Variant.None;
-    public override bool ConfirmCommand(byte dataByte, byte opCodeByte)
-    {
-        int lastNibble = dataByte & 0xF;
-        if ((opCodeByte >> 1) == 0b1001001 || (opCodeByte >> 1) == 0b1000001)
-        {
-            if (lastNibble == 0x8) { detectedVariant = Variant.Y; return true; }
-            if (lastNibble == 0x9) { detectedVariant = Variant.YPostInc; return true; }
-            if (lastNibble == 0xA) { detectedVariant = Variant.YPreDec; return true; }
-        }
-        detectedVariant = Variant.None;
-        return false;
-    }
-    public override void RunCommand(MachineData program)
-    {
-        int y = (program.DataSpace[29] << 8) | program.DataSpace[28];
-        byte highRByte = (byte)(CommandBytes[0] & 0b1);
-        byte lowRBytes = (byte)(CommandBytes[1] >> 4);
-        byte registerAddress = (byte)((highRByte << 4) | lowRBytes);
-        switch (detectedVariant)
-        {
-            case Variant.Y:
-                program.DataSpace[y] = program.DataSpace[registerAddress];
-                Console.WriteLine($"ST Y, R{registerAddress}");
-                break;
-            case Variant.YPostInc:
-                program.DataSpace[y] = program.DataSpace[registerAddress];
-                y++;
-                program.DataSpace[29] = (byte)(y >> 8);
-                program.DataSpace[28] = (byte)(y & 0xFF);
-                Console.WriteLine($"ST Y+, R{registerAddress}");
-                break;
-            case Variant.YPreDec:
-                y--;
-                program.DataSpace[29] = (byte)(y >> 8);
-                program.DataSpace[28] = (byte)(y & 0xFF);
-                program.DataSpace[y] = program.DataSpace[registerAddress];
-                Console.WriteLine($"ST -Y, R{registerAddress}");
-                break;
-        }
-        program.PC++;
-    }
-}
-
-[GenerateCommandRegistry]
-public class STZ(List<byte> commandBytes) : CommandTemplate(commandBytes)
-{
-    public override string Identifier => "STZ";
-    public override int AdditionalBytesNeeded => 0;
-    private enum Variant { None, Z, ZPostInc, ZPreDec }
-    private Variant detectedVariant = Variant.None;
-    public override bool ConfirmCommand(byte dataByte, byte opCodeByte)
-    {
-        int lastNibble = dataByte & 0xF;
-        if ((opCodeByte >> 1) == 0b1001001 || (opCodeByte >> 1) == 0b1000001)
-        {
-            if (lastNibble == 0x0) { detectedVariant = Variant.Z; return true; }
-            if (lastNibble == 0x1) { detectedVariant = Variant.ZPostInc; return true; }
-            if (lastNibble == 0x2) { detectedVariant = Variant.ZPreDec; return true; }
-        }
-        detectedVariant = Variant.None;
-        return false;
-    }
-    public override void RunCommand(MachineData program)
-    {
-        int z = (program.DataSpace[31] << 8) | program.DataSpace[30];
-        byte highRByte = (byte)(CommandBytes[0] & 0b1);
-        byte lowRBytes = (byte)(CommandBytes[1] >> 4);
-        byte registerAddress = (byte)((highRByte << 4) | lowRBytes);
-        switch (detectedVariant)
-        {
-            case Variant.Z:
-                program.DataSpace[z] = program.DataSpace[registerAddress];
-                Console.WriteLine($"ST Z, R{registerAddress}");
-                break;
-            case Variant.ZPostInc:
-                program.DataSpace[z] = program.DataSpace[registerAddress];
-                z++;
-                program.DataSpace[31] = (byte)(z >> 8);
-                program.DataSpace[30] = (byte)(z & 0xFF);
-                Console.WriteLine($"ST Z+, R{registerAddress}");
-                break;
-            case Variant.ZPreDec:
-                z--;
-                program.DataSpace[31] = (byte)(z >> 8);
-                program.DataSpace[30] = (byte)(z & 0xFF);
-                program.DataSpace[z] = program.DataSpace[registerAddress];
-                Console.WriteLine($"ST -Z, R{registerAddress}");
-                break;
-        }
-        program.PC++;
+        int rd = program.DataSpace[Rd], rr = program.DataSpace[Rr];
+        int result = (rd - rr - (program.GetFlag(SregBit.C) ? 1 : 0)) & 0xFF;
+        program.DataSpace[Rd] = (byte)result;
+        program.SetSubFlags(rd, rr, result, chainZero: true);
+        program.PC += 1;
+        Log($"SBC R{Rd}, R{Rr}");
     }
 }
 
@@ -1042,20 +163,16 @@ public class SUBI(List<byte> commandBytes) : CommandTemplate(commandBytes)
 {
     public override string Identifier => "SUBI";
     public override int AdditionalBytesNeeded => 0;
-    public override bool ConfirmCommand(byte dataByte, byte opCodeByte) => true;
+    // 0101 KKKK dddd KKKK
+    protected override bool Matches(int op) => (op & 0xF000) == 0x5000;
     public override void RunCommand(MachineData program)
     {
-        byte opCodeByte = CommandBytes[0];
-        byte dataByte = CommandBytes[1];
-        byte highKBytes = (byte)(opCodeByte & 0b1111);
-        byte lowKBytes = (byte)(dataByte & 0b1111);
-        byte dBytes = (byte)((dataByte >> 4) & 0b1111);
-        dBytes += 16;
-        byte kNumber = (byte)((highKBytes << 4) | lowKBytes);
-        byte result = (byte)(program.DataSpace[dBytes] - kNumber);
-        program.DataSpace[dBytes] = result;
-        program.PC++;
-        Console.WriteLine($"SUBI R{dBytes}, 0x{kNumber:X2}");
+        int rd = program.DataSpace[RdHigh];
+        int result = (rd - K8) & 0xFF;
+        program.DataSpace[RdHigh] = (byte)result;
+        program.SetSubFlags(rd, K8, result, chainZero: false);
+        program.PC += 1;
+        Log($"SUBI R{RdHigh}, 0x{K8:X2}");
     }
 }
 
@@ -1064,23 +181,1121 @@ public class SBCI(List<byte> commandBytes) : CommandTemplate(commandBytes)
 {
     public override string Identifier => "SBCI";
     public override int AdditionalBytesNeeded => 0;
-    // SBCI: Subtract Immediate with Carry
-    // Opcode: 0100 KKKK dddd KKKK
-    public override bool ConfirmCommand(byte dataByte, byte opCodeByte) => true;
+    // 0100 KKKK dddd KKKK
+    protected override bool Matches(int op) => (op & 0xF000) == 0x4000;
     public override void RunCommand(MachineData program)
     {
-        byte opCodeByte = CommandBytes[0];
-        byte dataByte = CommandBytes[1];
-        byte highKBytes = (byte)(opCodeByte & 0b1111);
-        byte lowKBytes = (byte)(dataByte & 0b1111);
-        byte dBytes = (byte)((dataByte >> 4) & 0b1111);
-        dBytes += 16;
-        byte kNumber = (byte)((highKBytes << 4) | lowKBytes);
-        byte carry = (byte)((program.StatusRegister.SREGByte & 0x1) != 0 ? 1 : 0);
-        byte result = (byte)(program.DataSpace[dBytes] - kNumber - carry);
-        program.DataSpace[dBytes] = result;
-        program.PC++;
-        Console.WriteLine($"SBCI R{dBytes}, 0x{kNumber:X2}");
+        int rd = program.DataSpace[RdHigh];
+        int result = (rd - K8 - (program.GetFlag(SregBit.C) ? 1 : 0)) & 0xFF;
+        program.DataSpace[RdHigh] = (byte)result;
+        program.SetSubFlags(rd, K8, result, chainZero: true);
+        program.PC += 1;
+        Log($"SBCI R{RdHigh}, 0x{K8:X2}");
     }
 }
 
+[GenerateCommandRegistry]
+public class ADIW(List<byte> commandBytes) : CommandTemplate(commandBytes)
+{
+    public override string Identifier => "ADIW";
+    public override int AdditionalBytesNeeded => 0;
+    public override int Cycles => 2;
+    // 1001 0110 KKdd KKKK, on the pairs R25:R24, R27:R26, R29:R28, R31:R30
+    protected override bool Matches(int op) => (op & 0xFF00) == 0x9600;
+    public override void RunCommand(MachineData program)
+    {
+        int d = 24 + ((Opcode >> 4) & 0x3) * 2;
+        int k = ((Opcode >> 2) & 0x30) | (Opcode & 0x0F);
+        int value = program.DataSpace[d] | (program.DataSpace[d + 1] << 8);
+        int result = (value + k) & 0xFFFF;
+        program.DataSpace[d] = (byte)result;
+        program.DataSpace[d + 1] = (byte)(result >> 8);
+        bool rdh7 = (value & 0x8000) != 0, r15 = (result & 0x8000) != 0;
+        program.SetWordFlags(result, v: !rdh7 && r15, c: rdh7 && !r15);
+        program.PC += 1;
+        Log($"ADIW R{d + 1}:R{d}, {k}");
+    }
+}
+
+[GenerateCommandRegistry]
+public class SBIW(List<byte> commandBytes) : CommandTemplate(commandBytes)
+{
+    public override string Identifier => "SBIW";
+    public override int AdditionalBytesNeeded => 0;
+    public override int Cycles => 2;
+    // 1001 0111 KKdd KKKK
+    protected override bool Matches(int op) => (op & 0xFF00) == 0x9700;
+    public override void RunCommand(MachineData program)
+    {
+        int d = 24 + ((Opcode >> 4) & 0x3) * 2;
+        int k = ((Opcode >> 2) & 0x30) | (Opcode & 0x0F);
+        int value = program.DataSpace[d] | (program.DataSpace[d + 1] << 8);
+        int result = (value - k) & 0xFFFF;
+        program.DataSpace[d] = (byte)result;
+        program.DataSpace[d + 1] = (byte)(result >> 8);
+        bool rdh7 = (value & 0x8000) != 0, r15 = (result & 0x8000) != 0;
+        program.SetWordFlags(result, v: rdh7 && !r15, c: r15 && !rdh7);
+        program.PC += 1;
+        Log($"SBIW R{d + 1}:R{d}, {k}");
+    }
+}
+
+[GenerateCommandRegistry]
+public class AND(List<byte> commandBytes) : CommandTemplate(commandBytes)
+{
+    public override string Identifier => "AND";
+    public override int AdditionalBytesNeeded => 0;
+    // 0010 00rd dddd rrrr (TST Rd is AND Rd, Rd)
+    protected override bool Matches(int op) => (op & 0xFC00) == 0x2000;
+    public override void RunCommand(MachineData program)
+    {
+        int result = program.DataSpace[Rd] & program.DataSpace[Rr];
+        program.DataSpace[Rd] = (byte)result;
+        program.SetLogicFlags(result);
+        program.PC += 1;
+        Log($"AND R{Rd}, R{Rr}");
+    }
+}
+
+[GenerateCommandRegistry]
+public class ANDI(List<byte> commandBytes) : CommandTemplate(commandBytes)
+{
+    public override string Identifier => "ANDI";
+    public override int AdditionalBytesNeeded => 0;
+    // 0111 KKKK dddd KKKK
+    protected override bool Matches(int op) => (op & 0xF000) == 0x7000;
+    public override void RunCommand(MachineData program)
+    {
+        int result = program.DataSpace[RdHigh] & K8;
+        program.DataSpace[RdHigh] = (byte)result;
+        program.SetLogicFlags(result);
+        program.PC += 1;
+        Log($"ANDI R{RdHigh}, 0x{K8:X2}");
+    }
+}
+
+[GenerateCommandRegistry]
+public class OR(List<byte> commandBytes) : CommandTemplate(commandBytes)
+{
+    public override string Identifier => "OR";
+    public override int AdditionalBytesNeeded => 0;
+    // 0010 10rd dddd rrrr
+    protected override bool Matches(int op) => (op & 0xFC00) == 0x2800;
+    public override void RunCommand(MachineData program)
+    {
+        int result = program.DataSpace[Rd] | program.DataSpace[Rr];
+        program.DataSpace[Rd] = (byte)result;
+        program.SetLogicFlags(result);
+        program.PC += 1;
+        Log($"OR R{Rd}, R{Rr}");
+    }
+}
+
+[GenerateCommandRegistry]
+public class ORI(List<byte> commandBytes) : CommandTemplate(commandBytes)
+{
+    public override string Identifier => "ORI";
+    public override int AdditionalBytesNeeded => 0;
+    // 0110 KKKK dddd KKKK
+    protected override bool Matches(int op) => (op & 0xF000) == 0x6000;
+    public override void RunCommand(MachineData program)
+    {
+        int result = program.DataSpace[RdHigh] | K8;
+        program.DataSpace[RdHigh] = (byte)result;
+        program.SetLogicFlags(result);
+        program.PC += 1;
+        Log($"ORI R{RdHigh}, 0x{K8:X2}");
+    }
+}
+
+[GenerateCommandRegistry]
+public class EOR(List<byte> commandBytes) : CommandTemplate(commandBytes)
+{
+    public override string Identifier => "EOR";
+    public override int AdditionalBytesNeeded => 0;
+    // 0010 01rd dddd rrrr (CLR Rd is EOR Rd, Rd)
+    protected override bool Matches(int op) => (op & 0xFC00) == 0x2400;
+    public override void RunCommand(MachineData program)
+    {
+        int result = program.DataSpace[Rd] ^ program.DataSpace[Rr];
+        program.DataSpace[Rd] = (byte)result;
+        program.SetLogicFlags(result);
+        program.PC += 1;
+        Log($"EOR R{Rd}, R{Rr}");
+    }
+}
+
+[GenerateCommandRegistry]
+public class COM(List<byte> commandBytes) : CommandTemplate(commandBytes)
+{
+    public override string Identifier => "COM";
+    public override int AdditionalBytesNeeded => 0;
+    // 1001 010d dddd 0000
+    protected override bool Matches(int op) => (op & 0xFE0F) == 0x9400;
+    public override void RunCommand(MachineData program)
+    {
+        int result = ~program.DataSpace[Rd] & 0xFF;
+        program.DataSpace[Rd] = (byte)result;
+        program.SetLogicFlags(result);
+        program.SetFlag(SregBit.C, true);
+        program.PC += 1;
+        Log($"COM R{Rd}");
+    }
+}
+
+[GenerateCommandRegistry]
+public class NEG(List<byte> commandBytes) : CommandTemplate(commandBytes)
+{
+    public override string Identifier => "NEG";
+    public override int AdditionalBytesNeeded => 0;
+    // 1001 010d dddd 0001
+    protected override bool Matches(int op) => (op & 0xFE0F) == 0x9401;
+    public override void RunCommand(MachineData program)
+    {
+        int rd = program.DataSpace[Rd];
+        int result = (0 - rd) & 0xFF;
+        program.DataSpace[Rd] = (byte)result;
+        program.SetSubFlags(0, rd, result, chainZero: false);
+        program.PC += 1;
+        Log($"NEG R{Rd}");
+    }
+}
+
+[GenerateCommandRegistry]
+public class INC(List<byte> commandBytes) : CommandTemplate(commandBytes)
+{
+    public override string Identifier => "INC";
+    public override int AdditionalBytesNeeded => 0;
+    // 1001 010d dddd 0011
+    protected override bool Matches(int op) => (op & 0xFE0F) == 0x9403;
+    public override void RunCommand(MachineData program)
+    {
+        int result = (program.DataSpace[Rd] + 1) & 0xFF;
+        program.DataSpace[Rd] = (byte)result;
+        program.SetIncDecFlags(result, v: result == 0x80);
+        program.PC += 1;
+        Log($"INC R{Rd}");
+    }
+}
+
+[GenerateCommandRegistry]
+public class DEC(List<byte> commandBytes) : CommandTemplate(commandBytes)
+{
+    public override string Identifier => "DEC";
+    public override int AdditionalBytesNeeded => 0;
+    // 1001 010d dddd 1010
+    protected override bool Matches(int op) => (op & 0xFE0F) == 0x940A;
+    public override void RunCommand(MachineData program)
+    {
+        int result = (program.DataSpace[Rd] - 1) & 0xFF;
+        program.DataSpace[Rd] = (byte)result;
+        program.SetIncDecFlags(result, v: result == 0x7F);
+        program.PC += 1;
+        Log($"DEC R{Rd}");
+    }
+}
+
+[GenerateCommandRegistry]
+public class SWAP(List<byte> commandBytes) : CommandTemplate(commandBytes)
+{
+    public override string Identifier => "SWAP";
+    public override int AdditionalBytesNeeded => 0;
+    // 1001 010d dddd 0010
+    protected override bool Matches(int op) => (op & 0xFE0F) == 0x9402;
+    public override void RunCommand(MachineData program)
+    {
+        int rd = program.DataSpace[Rd];
+        program.DataSpace[Rd] = (byte)(((rd << 4) | (rd >> 4)) & 0xFF);
+        program.PC += 1;
+        Log($"SWAP R{Rd}");
+    }
+}
+
+[GenerateCommandRegistry]
+public class ASR(List<byte> commandBytes) : CommandTemplate(commandBytes)
+{
+    public override string Identifier => "ASR";
+    public override int AdditionalBytesNeeded => 0;
+    // 1001 010d dddd 0101
+    protected override bool Matches(int op) => (op & 0xFE0F) == 0x9405;
+    public override void RunCommand(MachineData program)
+    {
+        int rd = program.DataSpace[Rd];
+        int result = (rd >> 1) | (rd & 0x80);
+        program.DataSpace[Rd] = (byte)result;
+        program.SetShiftFlags(result, carry: (rd & 1) != 0);
+        program.PC += 1;
+        Log($"ASR R{Rd}");
+    }
+}
+
+[GenerateCommandRegistry]
+public class LSR(List<byte> commandBytes) : CommandTemplate(commandBytes)
+{
+    public override string Identifier => "LSR";
+    public override int AdditionalBytesNeeded => 0;
+    // 1001 010d dddd 0110
+    protected override bool Matches(int op) => (op & 0xFE0F) == 0x9406;
+    public override void RunCommand(MachineData program)
+    {
+        int rd = program.DataSpace[Rd];
+        int result = rd >> 1;
+        program.DataSpace[Rd] = (byte)result;
+        program.SetShiftFlags(result, carry: (rd & 1) != 0);
+        program.PC += 1;
+        Log($"LSR R{Rd}");
+    }
+}
+
+[GenerateCommandRegistry]
+public class ROR(List<byte> commandBytes) : CommandTemplate(commandBytes)
+{
+    public override string Identifier => "ROR";
+    public override int AdditionalBytesNeeded => 0;
+    // 1001 010d dddd 0111
+    protected override bool Matches(int op) => (op & 0xFE0F) == 0x9407;
+    public override void RunCommand(MachineData program)
+    {
+        int rd = program.DataSpace[Rd];
+        int result = (rd >> 1) | (program.GetFlag(SregBit.C) ? 0x80 : 0);
+        program.DataSpace[Rd] = (byte)result;
+        program.SetShiftFlags(result, carry: (rd & 1) != 0);
+        program.PC += 1;
+        Log($"ROR R{Rd}");
+    }
+}
+
+[GenerateCommandRegistry]
+public class MUL(List<byte> commandBytes) : CommandTemplate(commandBytes)
+{
+    public override string Identifier => "MUL";
+    public override int AdditionalBytesNeeded => 0;
+    public override int Cycles => 2;
+    // 1001 11rd dddd rrrr: R1:R0 = Rd * Rr (unsigned)
+    protected override bool Matches(int op) => (op & 0xFC00) == 0x9C00;
+    public override void RunCommand(MachineData program)
+    {
+        program.SetProduct(program.DataSpace[Rd] * program.DataSpace[Rr]);
+        program.PC += 1;
+        Log($"MUL R{Rd}, R{Rr}");
+    }
+}
+
+[GenerateCommandRegistry]
+public class MULS(List<byte> commandBytes) : CommandTemplate(commandBytes)
+{
+    public override string Identifier => "MULS";
+    public override int AdditionalBytesNeeded => 0;
+    public override int Cycles => 2;
+    // 0000 0010 dddd rrrr: signed, R16-R31
+    protected override bool Matches(int op) => (op & 0xFF00) == 0x0200;
+    public override void RunCommand(MachineData program)
+    {
+        int d = 16 + ((Opcode >> 4) & 0x0F), r = 16 + (Opcode & 0x0F);
+        program.SetProduct((sbyte)program.DataSpace[d] * (sbyte)program.DataSpace[r]);
+        program.PC += 1;
+        Log($"MULS R{d}, R{r}");
+    }
+}
+
+[GenerateCommandRegistry]
+public class MULSU(List<byte> commandBytes) : CommandTemplate(commandBytes)
+{
+    public override string Identifier => "MULSU";
+    public override int AdditionalBytesNeeded => 0;
+    public override int Cycles => 2;
+    // 0000 0011 0ddd 0rrr: signed Rd times unsigned Rr, R16-R23
+    protected override bool Matches(int op) => (op & 0xFF88) == 0x0300;
+    public override void RunCommand(MachineData program)
+    {
+        int d = 16 + ((Opcode >> 4) & 0x07), r = 16 + (Opcode & 0x07);
+        program.SetProduct((sbyte)program.DataSpace[d] * program.DataSpace[r]);
+        program.PC += 1;
+        Log($"MULSU R{d}, R{r}");
+    }
+}
+
+// ===================================================================================================
+// Comparisons
+// ===================================================================================================
+
+[GenerateCommandRegistry]
+public class CP(List<byte> commandBytes) : CommandTemplate(commandBytes)
+{
+    public override string Identifier => "CP";
+    public override int AdditionalBytesNeeded => 0;
+    // 0001 01rd dddd rrrr
+    protected override bool Matches(int op) => (op & 0xFC00) == 0x1400;
+    public override void RunCommand(MachineData program)
+    {
+        int rd = program.DataSpace[Rd], rr = program.DataSpace[Rr];
+        program.SetSubFlags(rd, rr, (rd - rr) & 0xFF, chainZero: false);
+        program.PC += 1;
+        Log($"CP R{Rd}, R{Rr}");
+    }
+}
+
+[GenerateCommandRegistry]
+public class CPC(List<byte> commandBytes) : CommandTemplate(commandBytes)
+{
+    public override string Identifier => "CPC";
+    public override int AdditionalBytesNeeded => 0;
+    // 0000 01rd dddd rrrr
+    protected override bool Matches(int op) => (op & 0xFC00) == 0x0400;
+    public override void RunCommand(MachineData program)
+    {
+        int rd = program.DataSpace[Rd], rr = program.DataSpace[Rr];
+        int result = (rd - rr - (program.GetFlag(SregBit.C) ? 1 : 0)) & 0xFF;
+        program.SetSubFlags(rd, rr, result, chainZero: true);
+        program.PC += 1;
+        Log($"CPC R{Rd}, R{Rr}");
+    }
+}
+
+[GenerateCommandRegistry]
+public class CPI(List<byte> commandBytes) : CommandTemplate(commandBytes)
+{
+    public override string Identifier => "CPI";
+    public override int AdditionalBytesNeeded => 0;
+    // 0011 KKKK dddd KKKK
+    protected override bool Matches(int op) => (op & 0xF000) == 0x3000;
+    public override void RunCommand(MachineData program)
+    {
+        int rd = program.DataSpace[RdHigh];
+        program.SetSubFlags(rd, K8, (rd - K8) & 0xFF, chainZero: false);
+        program.PC += 1;
+        Log($"CPI R{RdHigh}, 0x{K8:X2}");
+    }
+}
+
+[GenerateCommandRegistry]
+public class CPSE(List<byte> commandBytes) : CommandTemplate(commandBytes)
+{
+    public override string Identifier => "CPSE";
+    public override int AdditionalBytesNeeded => 0;
+    // 0001 00rd dddd rrrr: skip the next instruction if Rd == Rr
+    protected override bool Matches(int op) => (op & 0xFC00) == 0x1000;
+    public override void RunCommand(MachineData program)
+    {
+        bool equal = program.DataSpace[Rd] == program.DataSpace[Rr];
+        if (equal) program.SkipNext();
+        else program.PC += 1;
+        Log($"CPSE R{Rd}, R{Rr}{(equal ? " (skip)" : "")}");
+    }
+}
+
+// ===================================================================================================
+// Jumps, calls and branches
+// ===================================================================================================
+
+[GenerateCommandRegistry]
+public class RJMP(List<byte> commandBytes) : CommandTemplate(commandBytes)
+{
+    public override string Identifier => "RJMP";
+    public override int AdditionalBytesNeeded => 0;
+    public override int Cycles => 2;
+    // 1100 kkkk kkkk kkkk: k is a signed 12-bit word offset
+    protected override bool Matches(int op) => (op & 0xF000) == 0xC000;
+    public override void RunCommand(MachineData program)
+    {
+        int k = SignExtend(Opcode & 0x0FFF, 12);
+        program.PC += k + 1;
+        Log($"RJMP {k}");
+    }
+
+    internal static int SignExtend(int value, int bits) => (value << (32 - bits)) >> (32 - bits);
+}
+
+[GenerateCommandRegistry]
+public class RCALL(List<byte> commandBytes) : CommandTemplate(commandBytes)
+{
+    public override string Identifier => "RCALL";
+    public override int AdditionalBytesNeeded => 0;
+    public override int Cycles => 3;
+    // 1101 kkkk kkkk kkkk
+    protected override bool Matches(int op) => (op & 0xF000) == 0xD000;
+    public override void RunCommand(MachineData program)
+    {
+        int k = RJMP.SignExtend(Opcode & 0x0FFF, 12);
+        program.PushReturnAddress(program.PC + 1);
+        program.PC += k + 1;
+        Log($"RCALL {k}");
+    }
+}
+
+[GenerateCommandRegistry]
+public class JMP(List<byte> commandBytes) : CommandTemplate(commandBytes)
+{
+    public override string Identifier => "JMP";
+    public override int AdditionalBytesNeeded => 2;
+    public override int Cycles => 3;
+    // 1001 010k kkkk 110k kkkk kkkk kkkk kkkk: absolute word address
+    protected override bool Matches(int op) => (op & 0xFE0E) == 0x940C;
+    public override void RunCommand(MachineData program)
+    {
+        int address = (((Opcode >> 3) & 0x3E) | (Opcode & 1)) << 16 | SecondWord;
+        program.PC = address;
+        Log($"JMP 0x{address:X4}");
+    }
+}
+
+[GenerateCommandRegistry]
+public class CALL(List<byte> commandBytes) : CommandTemplate(commandBytes)
+{
+    public override string Identifier => "CALL";
+    public override int AdditionalBytesNeeded => 2;
+    public override int Cycles => 4;
+    // 1001 010k kkkk 111k kkkk kkkk kkkk kkkk
+    protected override bool Matches(int op) => (op & 0xFE0E) == 0x940E;
+    public override void RunCommand(MachineData program)
+    {
+        int address = (((Opcode >> 3) & 0x3E) | (Opcode & 1)) << 16 | SecondWord;
+        program.PushReturnAddress(program.PC + 2);
+        program.PC = address;
+        Log($"CALL 0x{address:X4}");
+    }
+}
+
+[GenerateCommandRegistry]
+public class IJMP(List<byte> commandBytes) : CommandTemplate(commandBytes)
+{
+    public override string Identifier => "IJMP";
+    public override int AdditionalBytesNeeded => 0;
+    public override int Cycles => 2;
+    // 1001 0100 0000 1001: jump to the word address in Z
+    protected override bool Matches(int op) => op == 0x9409;
+    public override void RunCommand(MachineData program)
+    {
+        program.PC = program.Z;
+        Log("IJMP");
+    }
+}
+
+[GenerateCommandRegistry]
+public class ICALL(List<byte> commandBytes) : CommandTemplate(commandBytes)
+{
+    public override string Identifier => "ICALL";
+    public override int AdditionalBytesNeeded => 0;
+    public override int Cycles => 3;
+    // 1001 0101 0000 1001
+    protected override bool Matches(int op) => op == 0x9509;
+    public override void RunCommand(MachineData program)
+    {
+        program.PushReturnAddress(program.PC + 1);
+        program.PC = program.Z;
+        Log("ICALL");
+    }
+}
+
+[GenerateCommandRegistry]
+public class RET(List<byte> commandBytes) : CommandTemplate(commandBytes)
+{
+    public override string Identifier => "RET";
+    public override int AdditionalBytesNeeded => 0;
+    public override int Cycles => 4;
+    protected override bool Matches(int op) => op == 0x9508;
+    public override void RunCommand(MachineData program)
+    {
+        program.PC = program.PopReturnAddress();
+        Log("RET");
+    }
+}
+
+[GenerateCommandRegistry]
+public class RETI(List<byte> commandBytes) : CommandTemplate(commandBytes)
+{
+    public override string Identifier => "RETI";
+    public override int AdditionalBytesNeeded => 0;
+    public override int Cycles => 4;
+    protected override bool Matches(int op) => op == 0x9518;
+    public override void RunCommand(MachineData program)
+    {
+        program.PC = program.PopReturnAddress();
+        program.SetFlag(SregBit.I, true);
+        Log("RETI");
+    }
+}
+
+[GenerateCommandRegistry]
+public class BRBS(List<byte> commandBytes) : CommandTemplate(commandBytes)
+{
+    public override string Identifier => "BRBS";
+    public override int AdditionalBytesNeeded => 0;
+    // 1111 00kk kkkk ksss: branch if SREG bit s is set (BREQ, BRCS, BRMI, ...)
+    protected override bool Matches(int op) => (op & 0xFC00) == 0xF000;
+    public override void RunCommand(MachineData program)
+    {
+        int k = RJMP.SignExtend((Opcode >> 3) & 0x7F, 7);
+        bool taken = program.GetFlag(Bit);
+        program.PC += taken ? k + 1 : 1;
+        if (taken) program.ExtraCycles += 1;
+        Log($"BRBS {Bit}, {k}{(taken ? "" : " (not taken)")}");
+    }
+}
+
+[GenerateCommandRegistry]
+public class BRBC(List<byte> commandBytes) : CommandTemplate(commandBytes)
+{
+    public override string Identifier => "BRBC";
+    public override int AdditionalBytesNeeded => 0;
+    // 1111 01kk kkkk ksss: branch if SREG bit s is clear (BRNE, BRCC, BRPL, ...)
+    protected override bool Matches(int op) => (op & 0xFC00) == 0xF400;
+    public override void RunCommand(MachineData program)
+    {
+        int k = RJMP.SignExtend((Opcode >> 3) & 0x7F, 7);
+        bool taken = !program.GetFlag(Bit);
+        program.PC += taken ? k + 1 : 1;
+        if (taken) program.ExtraCycles += 1;
+        Log($"BRBC {Bit}, {k}{(taken ? "" : " (not taken)")}");
+    }
+}
+
+[GenerateCommandRegistry]
+public class SBRC(List<byte> commandBytes) : CommandTemplate(commandBytes)
+{
+    public override string Identifier => "SBRC";
+    public override int AdditionalBytesNeeded => 0;
+    // 1111 110r rrrr 0bbb: skip if bit b of Rr is clear
+    protected override bool Matches(int op) => (op & 0xFE08) == 0xFC00;
+    public override void RunCommand(MachineData program)
+    {
+        bool skip = ((program.DataSpace[Rd] >> Bit) & 1) == 0;
+        if (skip) program.SkipNext();
+        else program.PC += 1;
+        Log($"SBRC R{Rd}, {Bit}");
+    }
+}
+
+[GenerateCommandRegistry]
+public class SBRS(List<byte> commandBytes) : CommandTemplate(commandBytes)
+{
+    public override string Identifier => "SBRS";
+    public override int AdditionalBytesNeeded => 0;
+    // 1111 111r rrrr 0bbb: skip if bit b of Rr is set
+    protected override bool Matches(int op) => (op & 0xFE08) == 0xFE00;
+    public override void RunCommand(MachineData program)
+    {
+        bool skip = ((program.DataSpace[Rd] >> Bit) & 1) == 1;
+        if (skip) program.SkipNext();
+        else program.PC += 1;
+        Log($"SBRS R{Rd}, {Bit}");
+    }
+}
+
+[GenerateCommandRegistry]
+public class SBIC(List<byte> commandBytes) : CommandTemplate(commandBytes)
+{
+    public override string Identifier => "SBIC";
+    public override int AdditionalBytesNeeded => 0;
+    // 1001 1001 AAAA Abbb: skip if bit b of I/O register A is clear
+    protected override bool Matches(int op) => (op & 0xFF00) == 0x9900;
+    public override void RunCommand(MachineData program)
+    {
+        bool skip = ((program.ReadData(IoBitAddress) >> Bit) & 1) == 0;
+        if (skip) program.SkipNext();
+        else program.PC += 1;
+        Log($"SBIC 0x{IoBitAddress - 0x20:X2}, {Bit}");
+    }
+}
+
+[GenerateCommandRegistry]
+public class SBIS(List<byte> commandBytes) : CommandTemplate(commandBytes)
+{
+    public override string Identifier => "SBIS";
+    public override int AdditionalBytesNeeded => 0;
+    // 1001 1011 AAAA Abbb: skip if bit b of I/O register A is set
+    protected override bool Matches(int op) => (op & 0xFF00) == 0x9B00;
+    public override void RunCommand(MachineData program)
+    {
+        bool skip = ((program.ReadData(IoBitAddress) >> Bit) & 1) == 1;
+        if (skip) program.SkipNext();
+        else program.PC += 1;
+        Log($"SBIS 0x{IoBitAddress - 0x20:X2}, {Bit}");
+    }
+}
+
+// ===================================================================================================
+// Data transfer
+// ===================================================================================================
+
+[GenerateCommandRegistry]
+public class MOV(List<byte> commandBytes) : CommandTemplate(commandBytes)
+{
+    public override string Identifier => "MOV";
+    public override int AdditionalBytesNeeded => 0;
+    // 0010 11rd dddd rrrr
+    protected override bool Matches(int op) => (op & 0xFC00) == 0x2C00;
+    public override void RunCommand(MachineData program)
+    {
+        program.DataSpace[Rd] = program.DataSpace[Rr];
+        program.PC += 1;
+        Log($"MOV R{Rd}, R{Rr}");
+    }
+}
+
+[GenerateCommandRegistry]
+public class MOVW(List<byte> commandBytes) : CommandTemplate(commandBytes)
+{
+    public override string Identifier => "MOVW";
+    public override int AdditionalBytesNeeded => 0;
+    // 0000 0001 dddd rrrr: copy register pair Rr+1:Rr to Rd+1:Rd
+    protected override bool Matches(int op) => (op & 0xFF00) == 0x0100;
+    public override void RunCommand(MachineData program)
+    {
+        int d = ((Opcode >> 4) & 0x0F) * 2, r = (Opcode & 0x0F) * 2;
+        program.DataSpace[d] = program.DataSpace[r];
+        program.DataSpace[d + 1] = program.DataSpace[r + 1];
+        program.PC += 1;
+        Log($"MOVW R{d + 1}:R{d}, R{r + 1}:R{r}");
+    }
+}
+
+[GenerateCommandRegistry]
+public class LDI(List<byte> commandBytes) : CommandTemplate(commandBytes)
+{
+    public override string Identifier => "LDI";
+    public override int AdditionalBytesNeeded => 0;
+    // 1110 KKKK dddd KKKK (SER Rd is LDI Rd, 0xFF)
+    protected override bool Matches(int op) => (op & 0xF000) == 0xE000;
+    public override void RunCommand(MachineData program)
+    {
+        program.DataSpace[RdHigh] = (byte)K8;
+        program.PC += 1;
+        Log($"LDI R{RdHigh}, 0x{K8:X2}");
+    }
+}
+
+[GenerateCommandRegistry]
+public class LDS(List<byte> commandBytes) : CommandTemplate(commandBytes)
+{
+    public override string Identifier => "LDS";
+    public override int AdditionalBytesNeeded => 2;
+    public override int Cycles => 2;
+    // 1001 000d dddd 0000 kkkk kkkk kkkk kkkk
+    protected override bool Matches(int op) => (op & 0xFE0F) == 0x9000;
+    public override void RunCommand(MachineData program)
+    {
+        program.DataSpace[Rd] = program.ReadData(SecondWord);
+        program.PC += 2;
+        Log($"LDS R{Rd}, 0x{SecondWord:X4}");
+    }
+}
+
+[GenerateCommandRegistry]
+public class STS(List<byte> commandBytes) : CommandTemplate(commandBytes)
+{
+    public override string Identifier => "STS";
+    public override int AdditionalBytesNeeded => 2;
+    public override int Cycles => 2;
+    // 1001 001r rrrr 0000 kkkk kkkk kkkk kkkk
+    protected override bool Matches(int op) => (op & 0xFE0F) == 0x9200;
+    public override void RunCommand(MachineData program)
+    {
+        program.WriteData(SecondWord, program.DataSpace[Rd]);
+        program.PC += 2;
+        Log($"STS 0x{SecondWord:X4}, R{Rd}");
+    }
+}
+
+// Indirect loads and stores through the X (R27:R26), Y (R29:R28) and Z (R31:R30) pointers.
+// The low nibble picks the mode: plain, post-increment (+) or pre-decrement (-).
+public abstract class PointerAccess(List<byte> commandBytes, int pointer, string name) : CommandTemplate(commandBytes)
+{
+    public override int AdditionalBytesNeeded => 0;
+    public override int Cycles => 2;
+    protected bool PostIncrement => (Opcode & 0x3) == 1;
+    protected bool PreDecrement => (Opcode & 0x3) == 2;
+
+    // Returns the address to use and updates the pointer register for +/- modes.
+    protected int Address(MachineData program)
+    {
+        int value = program.DataSpace[pointer] | (program.DataSpace[pointer + 1] << 8);
+        if (PreDecrement) value = (value - 1) & 0xFFFF;
+        int address = value;
+        if (PostIncrement) value = (value + 1) & 0xFFFF;
+        program.DataSpace[pointer] = (byte)value;
+        program.DataSpace[pointer + 1] = (byte)(value >> 8);
+        return address;
+    }
+
+    protected string Operand => $"{(PreDecrement ? "-" : "")}{name}{(PostIncrement ? "+" : "")}";
+}
+
+[GenerateCommandRegistry]
+public class LDX(List<byte> commandBytes) : PointerAccess(commandBytes, 26, "X")
+{
+    public override string Identifier => "LDX";
+    // 1001 000d dddd 1100 / 1101 / 1110
+    protected override bool Matches(int op) => (op & 0xFE0F) is 0x900C or 0x900D or 0x900E;
+    public override void RunCommand(MachineData program)
+    {
+        program.DataSpace[Rd] = program.ReadData(Address(program));
+        program.PC += 1;
+        Log($"LD R{Rd}, {Operand}");
+    }
+}
+
+[GenerateCommandRegistry]
+public class LDY(List<byte> commandBytes) : PointerAccess(commandBytes, 28, "Y")
+{
+    public override string Identifier => "LDY";
+    // 1001 000d dddd 1001 / 1010 (plain LD Y is LDD with q = 0)
+    protected override bool Matches(int op) => (op & 0xFE0F) is 0x9009 or 0x900A;
+    public override void RunCommand(MachineData program)
+    {
+        program.DataSpace[Rd] = program.ReadData(Address(program));
+        program.PC += 1;
+        Log($"LD R{Rd}, {Operand}");
+    }
+}
+
+[GenerateCommandRegistry]
+public class LDZ(List<byte> commandBytes) : PointerAccess(commandBytes, 30, "Z")
+{
+    public override string Identifier => "LDZ";
+    // 1001 000d dddd 0001 / 0010
+    protected override bool Matches(int op) => (op & 0xFE0F) is 0x9001 or 0x9002;
+    public override void RunCommand(MachineData program)
+    {
+        program.DataSpace[Rd] = program.ReadData(Address(program));
+        program.PC += 1;
+        Log($"LD R{Rd}, {Operand}");
+    }
+}
+
+[GenerateCommandRegistry]
+public class STX(List<byte> commandBytes) : PointerAccess(commandBytes, 26, "X")
+{
+    public override string Identifier => "STX";
+    // 1001 001r rrrr 1100 / 1101 / 1110
+    protected override bool Matches(int op) => (op & 0xFE0F) is 0x920C or 0x920D or 0x920E;
+    public override void RunCommand(MachineData program)
+    {
+        program.WriteData(Address(program), program.DataSpace[Rd]);
+        program.PC += 1;
+        Log($"ST {Operand}, R{Rd}");
+    }
+}
+
+[GenerateCommandRegistry]
+public class STY(List<byte> commandBytes) : PointerAccess(commandBytes, 28, "Y")
+{
+    public override string Identifier => "STY";
+    // 1001 001r rrrr 1001 / 1010
+    protected override bool Matches(int op) => (op & 0xFE0F) is 0x9209 or 0x920A;
+    public override void RunCommand(MachineData program)
+    {
+        program.WriteData(Address(program), program.DataSpace[Rd]);
+        program.PC += 1;
+        Log($"ST {Operand}, R{Rd}");
+    }
+}
+
+[GenerateCommandRegistry]
+public class STZ(List<byte> commandBytes) : PointerAccess(commandBytes, 30, "Z")
+{
+    public override string Identifier => "STZ";
+    // 1001 001r rrrr 0001 / 0010
+    protected override bool Matches(int op) => (op & 0xFE0F) is 0x9201 or 0x9202;
+    public override void RunCommand(MachineData program)
+    {
+        program.WriteData(Address(program), program.DataSpace[Rd]);
+        program.PC += 1;
+        Log($"ST {Operand}, R{Rd}");
+    }
+}
+
+// LDD/STD Rd, Y+q or Z+q: 10q0 qq0d dddd yqqq, where bit 9 = store and y picks Y (1) or Z (0).
+public abstract class DisplacementAccess(List<byte> commandBytes, int pointer, string name) : CommandTemplate(commandBytes)
+{
+    public override int AdditionalBytesNeeded => 0;
+    public override int Cycles => 2;
+    protected int Q => ((Opcode >> 8) & 0x20) | ((Opcode >> 7) & 0x18) | (Opcode & 0x07);
+    protected int Address(MachineData program) =>
+        ((program.DataSpace[pointer] | (program.DataSpace[pointer + 1] << 8)) + Q) & 0xFFFF;
+    protected string Operand => Q == 0 ? name : $"{name}+{Q}";
+}
+
+[GenerateCommandRegistry]
+public class LDDY(List<byte> commandBytes) : DisplacementAccess(commandBytes, 28, "Y")
+{
+    public override string Identifier => "LDDY";
+    protected override bool Matches(int op) => (op & 0xD208) == 0x8008;
+    public override void RunCommand(MachineData program)
+    {
+        program.DataSpace[Rd] = program.ReadData(Address(program));
+        program.PC += 1;
+        Log($"LDD R{Rd}, {Operand}");
+    }
+}
+
+[GenerateCommandRegistry]
+public class LDDZ(List<byte> commandBytes) : DisplacementAccess(commandBytes, 30, "Z")
+{
+    public override string Identifier => "LDDZ";
+    protected override bool Matches(int op) => (op & 0xD208) == 0x8000;
+    public override void RunCommand(MachineData program)
+    {
+        program.DataSpace[Rd] = program.ReadData(Address(program));
+        program.PC += 1;
+        Log($"LDD R{Rd}, {Operand}");
+    }
+}
+
+[GenerateCommandRegistry]
+public class STDY(List<byte> commandBytes) : DisplacementAccess(commandBytes, 28, "Y")
+{
+    public override string Identifier => "STDY";
+    protected override bool Matches(int op) => (op & 0xD208) == 0x8208;
+    public override void RunCommand(MachineData program)
+    {
+        program.WriteData(Address(program), program.DataSpace[Rd]);
+        program.PC += 1;
+        Log($"STD {Operand}, R{Rd}");
+    }
+}
+
+[GenerateCommandRegistry]
+public class STDZ(List<byte> commandBytes) : DisplacementAccess(commandBytes, 30, "Z")
+{
+    public override string Identifier => "STDZ";
+    protected override bool Matches(int op) => (op & 0xD208) == 0x8200;
+    public override void RunCommand(MachineData program)
+    {
+        program.WriteData(Address(program), program.DataSpace[Rd]);
+        program.PC += 1;
+        Log($"STD {Operand}, R{Rd}");
+    }
+}
+
+[GenerateCommandRegistry]
+public class LPM(List<byte> commandBytes) : CommandTemplate(commandBytes)
+{
+    public override string Identifier => "LPM";
+    public override int AdditionalBytesNeeded => 0;
+    public override int Cycles => 3;
+    // Reads program memory (flash) at the byte address in Z.
+    // 1001 0101 1100 1000: LPM (into R0)   1001 000d dddd 0100 / 0101: LPM Rd, Z / Z+
+    protected override bool Matches(int op) => op == 0x95C8 || (op & 0xFE0E) == 0x9004;
+    public override void RunCommand(MachineData program)
+    {
+        bool implied = Opcode == 0x95C8;
+        int target = implied ? 0 : Rd;
+        int z = program.Z;
+        program.DataSpace[target] = z < program.ProgramMemory.Length ? program.ProgramMemory[z] : (byte)0xFF;
+        if (!implied && (Opcode & 1) == 1) program.Z = (z + 1) & 0xFFFF;
+        program.PC += 1;
+        if (implied) Log("LPM");
+        else Log($"LPM R{target}, Z{((Opcode & 1) == 1 ? "+" : "")}");
+    }
+}
+
+[GenerateCommandRegistry]
+public class IN(List<byte> commandBytes) : CommandTemplate(commandBytes)
+{
+    public override string Identifier => "IN";
+    public override int AdditionalBytesNeeded => 0;
+    // 1011 0AAd dddd AAAA: I/O address A is data address A + 0x20
+    protected override bool Matches(int op) => (op & 0xF800) == 0xB000;
+    public override void RunCommand(MachineData program)
+    {
+        int io = ((Opcode >> 5) & 0x30) | (Opcode & 0x0F);
+        program.DataSpace[Rd] = program.ReadData(io + 0x20);
+        program.PC += 1;
+        Log($"IN R{Rd}, 0x{io:X2}");
+    }
+}
+
+[GenerateCommandRegistry]
+public class OUT(List<byte> commandBytes) : CommandTemplate(commandBytes)
+{
+    public override string Identifier => "OUT";
+    public override int AdditionalBytesNeeded => 0;
+    // 1011 1AAr rrrr AAAA
+    protected override bool Matches(int op) => (op & 0xF800) == 0xB800;
+    public override void RunCommand(MachineData program)
+    {
+        int io = ((Opcode >> 5) & 0x30) | (Opcode & 0x0F);
+        program.WriteData(io + 0x20, program.DataSpace[Rd]);
+        program.PC += 1;
+        Log($"OUT 0x{io:X2}, R{Rd}");
+    }
+}
+
+[GenerateCommandRegistry]
+public class PUSH(List<byte> commandBytes) : CommandTemplate(commandBytes)
+{
+    public override string Identifier => "PUSH";
+    public override int AdditionalBytesNeeded => 0;
+    public override int Cycles => 2;
+    // 1001 001r rrrr 1111
+    protected override bool Matches(int op) => (op & 0xFE0F) == 0x920F;
+    public override void RunCommand(MachineData program)
+    {
+        program.PushByte(program.DataSpace[Rd]);
+        program.PC += 1;
+        Log($"PUSH R{Rd}");
+    }
+}
+
+[GenerateCommandRegistry]
+public class POP(List<byte> commandBytes) : CommandTemplate(commandBytes)
+{
+    public override string Identifier => "POP";
+    public override int AdditionalBytesNeeded => 0;
+    public override int Cycles => 2;
+    // 1001 000d dddd 1111
+    protected override bool Matches(int op) => (op & 0xFE0F) == 0x900F;
+    public override void RunCommand(MachineData program)
+    {
+        program.DataSpace[Rd] = program.PopByte();
+        program.PC += 1;
+        Log($"POP R{Rd}");
+    }
+}
+
+// ===================================================================================================
+// Bit operations
+// ===================================================================================================
+
+[GenerateCommandRegistry]
+public class SBI(List<byte> commandBytes) : CommandTemplate(commandBytes)
+{
+    public override string Identifier => "SBI";
+    public override int AdditionalBytesNeeded => 0;
+    public override int Cycles => 2;
+    // 1001 1010 AAAA Abbb: set bit b of I/O register A
+    protected override bool Matches(int op) => (op & 0xFF00) == 0x9A00;
+    public override void RunCommand(MachineData program)
+    {
+        program.WriteData(IoBitAddress, (byte)(program.ReadData(IoBitAddress) | (1 << Bit)));
+        program.PC += 1;
+        Log($"SBI 0x{IoBitAddress - 0x20:X2}, {Bit}");
+    }
+}
+
+[GenerateCommandRegistry]
+public class CBI(List<byte> commandBytes) : CommandTemplate(commandBytes)
+{
+    public override string Identifier => "CBI";
+    public override int AdditionalBytesNeeded => 0;
+    public override int Cycles => 2;
+    // 1001 1000 AAAA Abbb: clear bit b of I/O register A
+    protected override bool Matches(int op) => (op & 0xFF00) == 0x9800;
+    public override void RunCommand(MachineData program)
+    {
+        program.WriteData(IoBitAddress, (byte)(program.ReadData(IoBitAddress) & ~(1 << Bit)));
+        program.PC += 1;
+        Log($"CBI 0x{IoBitAddress - 0x20:X2}, {Bit}");
+    }
+}
+
+[GenerateCommandRegistry]
+public class BST(List<byte> commandBytes) : CommandTemplate(commandBytes)
+{
+    public override string Identifier => "BST";
+    public override int AdditionalBytesNeeded => 0;
+    // 1111 101d dddd 0bbb: T = bit b of Rd
+    protected override bool Matches(int op) => (op & 0xFE08) == 0xFA00;
+    public override void RunCommand(MachineData program)
+    {
+        program.SetFlag(SregBit.T, ((program.DataSpace[Rd] >> Bit) & 1) == 1);
+        program.PC += 1;
+        Log($"BST R{Rd}, {Bit}");
+    }
+}
+
+[GenerateCommandRegistry]
+public class BLD(List<byte> commandBytes) : CommandTemplate(commandBytes)
+{
+    public override string Identifier => "BLD";
+    public override int AdditionalBytesNeeded => 0;
+    // 1111 100d dddd 0bbb: bit b of Rd = T
+    protected override bool Matches(int op) => (op & 0xFE08) == 0xF800;
+    public override void RunCommand(MachineData program)
+    {
+        int value = program.DataSpace[Rd];
+        value = program.GetFlag(SregBit.T) ? value | (1 << Bit) : value & ~(1 << Bit);
+        program.DataSpace[Rd] = (byte)value;
+        program.PC += 1;
+        Log($"BLD R{Rd}, {Bit}");
+    }
+}
+
+[GenerateCommandRegistry]
+public class SEI(List<byte> commandBytes) : CommandTemplate(commandBytes)
+{
+    public override string Identifier => "SEI";
+    public override int AdditionalBytesNeeded => 0;
+    protected override bool Matches(int op) => op == 0x9478;
+    public override void RunCommand(MachineData program)
+    {
+        program.SetFlag(SregBit.I, true);
+        program.PC += 1;
+        Log("SEI");
+    }
+}
+
+[GenerateCommandRegistry]
+public class CLI(List<byte> commandBytes) : CommandTemplate(commandBytes)
+{
+    public override string Identifier => "CLI";
+    public override int AdditionalBytesNeeded => 0;
+    protected override bool Matches(int op) => op == 0x94F8;
+    public override void RunCommand(MachineData program)
+    {
+        program.SetFlag(SregBit.I, false);
+        program.PC += 1;
+        Log("CLI");
+    }
+}
+
+[GenerateCommandRegistry]
+public class BSET(List<byte> commandBytes) : CommandTemplate(commandBytes)
+{
+    public override string Identifier => "BSET";
+    public override int AdditionalBytesNeeded => 0;
+    // 1001 0100 0sss 1000: set SREG bit s (SEC, SEZ, SEN, ...)
+    protected override bool Matches(int op) => (op & 0xFF8F) == 0x9408;
+    public override void RunCommand(MachineData program)
+    {
+        int s = (Opcode >> 4) & 0x7;
+        program.SetFlag(s, true);
+        program.PC += 1;
+        Log($"BSET {s}");
+    }
+}
+
+[GenerateCommandRegistry]
+public class BCLR(List<byte> commandBytes) : CommandTemplate(commandBytes)
+{
+    public override string Identifier => "BCLR";
+    public override int AdditionalBytesNeeded => 0;
+    // 1001 0100 1sss 1000: clear SREG bit s (CLC, CLZ, CLN, ...)
+    protected override bool Matches(int op) => (op & 0xFF8F) == 0x9488;
+    public override void RunCommand(MachineData program)
+    {
+        int s = (Opcode >> 4) & 0x7;
+        program.SetFlag(s, false);
+        program.PC += 1;
+        Log($"BCLR {s}");
+    }
+}
+
+// ===================================================================================================
+// MCU control (no-ops here: there is no sleep mode, watchdog or debugger to talk to)
+// ===================================================================================================
+
+[GenerateCommandRegistry]
+public class NOP(List<byte> commandBytes) : CommandTemplate(commandBytes)
+{
+    public override string Identifier => "NOP";
+    public override int AdditionalBytesNeeded => 0;
+    // NOP 0x0000, SLEEP 0x9588, BREAK 0x9598, WDR 0x95A8
+    protected override bool Matches(int op) => op is 0x0000 or 0x9588 or 0x9598 or 0x95A8;
+    public override void RunCommand(MachineData program)
+    {
+        program.PC += 1;
+        Log("NOP");
+    }
+}

@@ -30,6 +30,66 @@ public class VisualizerController : ControllerBase
         return parse.ParseCommand(state);
     }
 
+    /// <summary>
+    /// Same as CompileCode, but streams progress as newline-delimited JSON while it works:
+    /// {"type":"stage","stage":"build|decode|map","message":...}, {"type":"log","message":...} for
+    /// arduino-cli's step announcements, and finally {"type":"result", ...CompileCodeResponse}.
+    /// </summary>
+    [HttpPost("CompileCodeStream")]
+    public async Task CompileCodeStream([FromBody] string sourceCode)
+    {
+        Response.ContentType = "application/x-ndjson";
+        var options = new JsonSerializerOptions(JsonSerializerDefaults.Web);
+        var writeLock = new SemaphoreSlim(1, 1);
+
+        async Task Send(object payload)
+        {
+            await writeLock.WaitAsync();
+            try
+            {
+                await Response.WriteAsync(JsonSerializer.Serialize(payload, options) + "\n");
+                await Response.Body.FlushAsync();
+            }
+            finally { writeLock.Release(); }
+        }
+
+        CompileCodeResponse result;
+        try
+        {
+            await Send(new { type = "stage", stage = "build", message = "Building the sketch with arduino-cli" });
+            var artifacts = await Task.Run(() => new CompileCode().CompileSketch(
+                sourceCode,
+                line => Send(new { type = "log", message = line }).GetAwaiter().GetResult()));
+
+            var dataLines = ExtractInstructionDataLines(artifacts.HexText);
+            await Send(new { type = "stage", stage = "decode", message = "Decoding instructions from the hex file" });
+            var instructions = new FindInstruction().FindAllCommands(dataLines);
+
+            await Send(new { type = "stage", stage = "map", message = $"Matching {instructions.Count} instructions to lines in your sketch" });
+            try
+            {
+                await Task.Run(() => ElfSourceLineResolver.ApplySourceLines(
+                    artifacts.ElfFilePath, artifacts.SketchFilePath, CountSourceLines(sourceCode), instructions));
+            }
+            catch (Exception resolveEx)
+            {
+                Console.WriteLine($"ELF source-line mapping unavailable: {resolveEx.Message}");
+            }
+
+            result = new CompileCodeResponse(artifacts.HexText, Convert.ToBase64String(artifacts.ElfBytes), instructions, []);
+        }
+        catch (Exception ex)
+        {
+            var errors = ex.Message
+                .Split('\n', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
+                .Where(message => !string.IsNullOrWhiteSpace(message))
+                .ToList();
+            result = new CompileCodeResponse(null, null, [], errors.Count > 0 ? errors : ["Arduino compilation failed."]);
+        }
+
+        await Send(new { type = "result", result.HexText, result.ElfBase64, result.Instructions, result.Errors });
+    }
+
     [HttpPost("CompileCode")]
     public ActionResult<CompileCodeResponse> CompileCode([FromBody] string sourceCode)
     {

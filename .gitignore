@@ -415,3 +415,6 @@ FodyWeavers.xsd
 *.msix
 *.msm
 *.msp
+
+# Ohmster accounts and projects (local SQLite database)
+API/ohmster.db*

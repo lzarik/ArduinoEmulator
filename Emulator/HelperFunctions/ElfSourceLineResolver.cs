@@ -34,29 +34,52 @@ public static class ElfSourceLineResolver
         var addr2linePath = ResolveAvrAddr2LinePath();
         var sketchFileName = Path.GetFileName(sketchFilePath);
 
+        // One avr-addr2line call for many addresses: starting a process per instruction took ~40 ms each,
+        // which made source mapping most of the compile time.
+        var linesByAddress = new Dictionary<int, List<string>>();
+        foreach (var chunk in addressByCommandIndex.Select(entry => entry.Address).Distinct().Chunk(500))
+        {
+            foreach (var (address, lines) in ResolveAddresses(addr2linePath, elfFilePath, chunk))
+            {
+                linesByAddress[address] = lines;
+            }
+        }
+
         foreach (var (index, address) in addressByCommandIndex)
         {
-            var sourceLine = ResolveSourceLineForAddress(
-                addr2linePath,
-                elfFilePath,
-                address,
-                sketchFileName,
-                maxSketchLineNumber);
-
-            commands[index].SourceLineNumber = sourceLine;
+            commands[index].SourceLineNumber = linesByAddress.TryGetValue(address, out var lines)
+                ? ResolveSourceLine(lines, sketchFileName, maxSketchLineNumber)
+                : null;
         }
     }
 
-    private static int? ResolveSourceLineForAddress(
-        string addr2linePath,
-        string elfFilePath,
-        int address,
-        string sketchFileName,
-        int maxSketchLineNumber)
+    // With -a, addr2line prints each address (as 0x...) before its function/file lines, so the combined
+    // output can be split back into one block per address.
+    private static Dictionary<int, List<string>> ResolveAddresses(string addr2linePath, string elfFilePath, int[] addresses)
     {
-        var outputLines = RunCommand(addr2linePath, $"-e \"{elfFilePath}\" -f -C -i 0x{address:X}")
+        var arguments = $"-e \"{elfFilePath}\" -a -f -C -i " + string.Join(' ', addresses.Select(a => $"0x{a:X}"));
+        var output = RunCommand(addr2linePath, arguments)
             .Split('\n', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
 
+        var result = new Dictionary<int, List<string>>();
+        List<string>? current = null;
+        foreach (var line in output)
+        {
+            if (line.StartsWith("0x") && int.TryParse(line[2..], System.Globalization.NumberStyles.HexNumber, null, out var address))
+            {
+                current = new List<string>();
+                result[address] = current;
+            }
+            else
+            {
+                current?.Add(line);
+            }
+        }
+        return result;
+    }
+
+    private static int? ResolveSourceLine(List<string> outputLines, string sketchFileName, int maxSketchLineNumber)
+    {
         var parsed = new List<(string FilePath, int Line)>();
         foreach (var line in outputLines)
         {
