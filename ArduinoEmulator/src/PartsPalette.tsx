@@ -1,7 +1,9 @@
+import { useEffect, useRef, useState } from 'react'
 import { PART_INFO, PART_TYPES, WIRE_COLORS, type LedColor, type PartType } from './circuit'
 import type { Tool } from './Workbench'
 
-// Strip of parts across the top of the workbench. Pick one, then click a breadboard hole to place it.
+// Strip of parts across the top of the workbench: icons (named on hover), then the LED and wire colours,
+// each one swatch that opens a small picker. Pick a part, then click a breadboard hole to place it.
 
 const LED_SWATCHES: Record<LedColor, string> = { red: '#e53935', green: '#43a047', yellow: '#fbc02d', blue: '#1e88e5' }
 
@@ -67,6 +69,66 @@ function PartIcon({ type, color }: { type: PartType; color: string }) {
   }
 }
 
+// One swatch showing the current colour; clicking it opens the other choices.
+function SwatchPicker({
+  label,
+  value,
+  options,
+  onChange,
+}: {
+  label: string
+  value: string
+  options: { value: string; name: string }[]
+  onChange: (value: string) => void
+}) {
+  const [open, setOpen] = useState(false)
+  const ref = useRef<HTMLDivElement>(null)
+
+  useEffect(() => {
+    if (!open) return
+    const onPointer = (e: PointerEvent) => {
+      if (!ref.current?.contains(e.target as Node)) setOpen(false)
+    }
+    window.addEventListener('pointerdown', onPointer)
+    return () => window.removeEventListener('pointerdown', onPointer)
+  }, [open])
+
+  return (
+    <div className="palette-group" ref={ref}>
+      <span className="palette-group-label">{label}</span>
+      <button
+        type="button"
+        className="swatch active"
+        style={{ background: value }}
+        aria-label={`${label} colour`}
+        aria-expanded={open}
+        title={`${label} colour`}
+        onClick={() => setOpen((o) => !o)}
+      />
+      {open && (
+        <div className="swatch-popover" role="listbox" aria-label={`${label} colour`}>
+          {options.map((o) => (
+            <button
+              key={o.value}
+              type="button"
+              role="option"
+              aria-selected={o.value === value}
+              className={`swatch${o.value === value ? ' active' : ''}`}
+              style={{ background: o.value }}
+              aria-label={o.name}
+              title={o.name}
+              onClick={() => {
+                onChange(o.value)
+                setOpen(false)
+              }}
+            />
+          ))}
+        </div>
+      )}
+    </div>
+  )
+}
+
 interface PartsPaletteProps {
   tool: Tool
   onToolChange: (tool: Tool) => void
@@ -88,49 +150,35 @@ export function PartsPalette({ tool, onToolChange, ledColor, onLedColorChange, w
               type="button"
               className={`palette-part${active ? ' active' : ''}`}
               aria-pressed={active}
+              aria-label={PART_INFO[type].label}
+              title={PART_INFO[type].label}
               onClick={() =>
                 onToolChange(active ? { kind: 'select' } : { kind: 'place', type, color: type === 'led' ? ledColor : undefined })
               }
             >
               <PartIcon type={type} color={LED_SWATCHES[ledColor]} />
-              <span>{PART_INFO[type].label}</span>
             </button>
           )
         })}
       </div>
 
       <div className="palette-options">
-        <div className="palette-group">
-          <span className="palette-group-label">LED</span>
-          {(Object.keys(LED_SWATCHES) as LedColor[]).map((c) => (
-            <button
-              key={c}
-              type="button"
-              className={`swatch${ledColor === c ? ' active' : ''}`}
-              style={{ background: LED_SWATCHES[c] }}
-              aria-label={`${c} LED`}
-              title={`${c} LED`}
-              onClick={() => {
-                onLedColorChange(c)
-                if (tool.kind === 'place' && tool.type === 'led') onToolChange({ ...tool, color: c })
-              }}
-            />
-          ))}
-        </div>
-        <div className="palette-group">
-          <span className="palette-group-label">Wire</span>
-          {WIRE_COLORS.map((c) => (
-            <button
-              key={c}
-              type="button"
-              className={`swatch${wireColor === c ? ' active' : ''}`}
-              style={{ background: c }}
-              aria-label="Wire color"
-              title="Wire color"
-              onClick={() => onWireColorChange(c)}
-            />
-          ))}
-        </div>
+        <SwatchPicker
+          label="LED"
+          value={LED_SWATCHES[ledColor]}
+          options={(Object.keys(LED_SWATCHES) as LedColor[]).map((c) => ({ value: LED_SWATCHES[c], name: `${c} LED` }))}
+          onChange={(swatch) => {
+            const c = (Object.keys(LED_SWATCHES) as LedColor[]).find((k) => LED_SWATCHES[k] === swatch) ?? ledColor
+            onLedColorChange(c)
+            if (tool.kind === 'place' && tool.type === 'led') onToolChange({ ...tool, color: c })
+          }}
+        />
+        <SwatchPicker
+          label="Wire"
+          value={wireColor}
+          options={WIRE_COLORS.map((c) => ({ value: c, name: 'Wire colour' }))}
+          onChange={onWireColorChange}
+        />
       </div>
     </div>
   )

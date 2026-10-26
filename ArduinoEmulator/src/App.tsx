@@ -8,26 +8,14 @@ import { Workbench, type Tool } from './Workbench'
 import { Debugger } from './Debugger'
 import { PartsPalette } from './PartsPalette'
 import { NewProjectDialog } from './NewProjectDialog'
-import { ProjectsSidebar } from './ProjectsSidebar'
-import { HamsterWheel } from './HamsterWheel'
+import { LogoMenu, ProjectMenu } from './HeaderMenus'
 import { HomeScreen, type HomeSection } from './HomeScreen'
-import { Learn } from './Learn'
-import { BuildProgress, type BuildState } from './BuildProgress'
+import { cliProgress, seconds, stepProgress, type BuildState, type OutputLine } from './buildLog'
+import { OutputPanel, StatusBar } from './OutputPanel'
 import { WIRE_COLORS, evaluateCircuit, type Circuit, type LedColor } from './circuit'
 import { loadProjects, newProject, storeProjects, type Project } from './projects'
 
 function ConvertHexToNumber(hexDigits: string): number { return parseInt(hexDigits, 16); }
-
-const pastelPalette = [
-  '#ffdfe5',
-  '#ffeecf',
-  '#e4f6d9',
-  '#d9f3f4',
-  '#dde8ff',
-  '#eadfff',
-  '#ffdff4',
-  '#f6e7d9',
-];
 
 function ParseHexDataLines(hexContent: string): string[] {
   const lines = hexContent.split(/\r?\n/);
@@ -121,6 +109,22 @@ const machineFromState = (state: EmulatorState): MachineData => ({
   StatusRegister: { sregByte: state.dataSpace[0x5f] },
 });
 
+const CALL_INSTRUCTIONS = new Set(['CALL', 'RCALL', 'ICALL']);
+
+// The line of the sketch that called into the code running now, found from the stack: every CALL pushes
+// the address it will return to (as a word address, high byte just above the low byte). Walking up from
+// the stack pointer, the first return address that follows a CALL made by a line of the sketch tells
+// which line it was, however deep in library code the program is.
+function callingSketchLine(data: number[], sp: number, commands: CommandInformation[], indexByAddress: Map<number, number>) {
+  for (let a = sp + 1; a + 1 < Math.min(data.length, 0x900); a++) {
+    const i = indexByAddress.get(((data[a] << 8) | data[a + 1]) * 2);
+    if (!i) continue;
+    const call = commands[i - 1];
+    if (CALL_INSTRUCTIONS.has(call.CommandName) && call.SourceLineNumber != null) return call.SourceLineNumber;
+  }
+  return null;
+}
+
 // Run speeds: one instruction at a time (watch the debugger), slowed-down time, or real time.
 const SPEEDS = [
   { label: 'Instruction', kind: 'step', delay: 250 },
@@ -131,9 +135,9 @@ const SPEEDS = [
 // How often the run loop asks the backend for the next slice of emulated time.
 const FRAME_MS = 33;
 
-type Tab = 'code' | 'design' | 'learn';
+type Tab = 'code' | 'design';
 
-const TAB_LABELS: Record<Tab, string> = { code: 'Code', design: 'Design', learn: 'Learn' };
+const TAB_LABELS: Record<Tab, string> = { code: 'Code', design: 'Design' };
 
 // The steps shown while compiling a sketch or loading a .hex file.
 const COMPILE_STEPS = [
@@ -150,7 +154,13 @@ const HEX_STEPS = [
 const formatCommandBytes = (bytes: number[]) =>
   bytes.map((b) => `0x${b.toString(16).padStart(2, '0').toUpperCase()}`).join(' ');
 
+const DEBUGGER_KEY = 'ohmster.debugger';
+
 const errorText = (e: unknown, fallback: string) => (e instanceof Error ? e.message : fallback);
+
+// Compiler messages name the sketch by its full temporary path (/private/var/folders/…/GeneratedSketch.ino:14:2);
+// shorten that to sketch.ino:14:2.
+const tidyCompilerMessage = (message: string) => message.replace(/(?:\/[^\s/:]+)+\/[^\s/:]+\.ino\b/g, 'sketch.ino');
 
 const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 
@@ -176,10 +186,27 @@ function App({ onExit }: { onExit: () => void })
   // Workspace ---------------------------------------------------------------------------------------
   const [tab, setTab] = useState<Tab>('code');
   const [codeSource, setCodeSource] = useState<'sketch' | 'hex'>('sketch');
-  const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
+  // The debugger can be hidden for a full-width editor or bench; remembered between visits
+  const [debuggerOpen, setDebuggerOpen] = useState(() => {
+    try {
+      return localStorage.getItem(DEBUGGER_KEY) !== 'hidden';
+    } catch {
+      return true;
+    }
+  });
   // Progress of the current compile or load, shown step by step.
   const [build, setBuild] = useState<BuildState | null>(null);
   const [now, setNow] = useState(() => performance.now());
+  // The Output panel opens by itself when a build starts; the status bar opens and closes it too.
+  const [outputOpen, setOutputOpen] = useState(false);
+  const [outputHeight, setOutputHeight] = useState(210);
+  const [freshSuccess, setFreshSuccess] = useState(false);
+  const freshSuccessTimer = useRef<number | undefined>(undefined);
+  // What the Output panel shows: the latest build's log, then any errors from running the program
+  const [outputLog, setOutputLog] = useState<OutputLine[]>([]);
+  // After a successful build the panel closes by itself; a failed one keeps it open
+  const outputCloseTimer = useRef<number | undefined>(undefined);
+  const buildInfoRef = useRef({ title: '', startedAt: 0 });
   const [tool, setTool] = useState<Tool>({ kind: 'select' });
   const [ledColor, setLedColor] = useState<LedColor>('red');
   const [wireColor, setWireColor] = useState(WIRE_COLORS[0]);
@@ -195,6 +222,12 @@ function App({ onExit }: { onExit: () => void })
   const [elfText, setElfText] = useState<string>("");
   const [dataLines, setDataLines] = useState<string[]>([]);
   const [instructionPosition, setInstructionPosition] = useState(0);
+  // The line of the sketch the current instruction belongs to. Inside library code (digitalWrite, delay…)
+  // that has no line of its own, it's the sketch line that called into it, found from the stack.
+  const [sketchLine, setSketchLine] = useState<{ line: number; inLibrary: boolean } | null>(null);
+  const lastSketchLineRef = useRef<number | null>(null);
+  // Program index of the instruction at each flash byte address, for following return addresses
+  const indexByAddressRef = useRef(new Map<number, number>());
   const [machineData, setMachineData] = useState<MachineData>(freshMachine);
   const [changedRegisters, setChangedRegisters] = useState<Set<number>>(new Set());
   const [cycles, setCycles] = useState(0);
@@ -244,7 +277,9 @@ function App({ onExit }: { onExit: () => void })
       []);
   };
 
-  const highlightSourceLine = (lineNumber: number, colorIndex: number) => {
+  // Highlights a line of the sketch in the same amber as the debugger's current instruction: solid for the
+  // line the instruction came from, lighter with a dashed edge while inside library code it called.
+  const highlightSourceLine = (lineNumber: number, inLibrary = false) => {
     if (!monacoEditorRef.current || !monacoRef.current || lineNumber <= 0) {
       return;
     }
@@ -260,21 +295,20 @@ function App({ onExit }: { onExit: () => void })
         range: new monacoRef.current.Range(lineNumber, 1, lineNumber, 1),
         options: {
           isWholeLine: true,
-          className: `source-line-highlight-${colorIndex}`,
-          linesDecorationsClassName: `source-line-highlight-gutter-${colorIndex}`,
+          className: inLibrary ? 'source-line-library' : 'source-line-current',
+          linesDecorationsClassName: inLibrary ? 'source-line-library-gutter' : 'source-line-current-gutter',
         },
       }]);
 
-    monacoEditorRef.current.revealLineInCenter(lineNumber);
+    // Scroll only when the line is off screen, so a running program doesn't make the editor jump
+    monacoEditorRef.current.revealLineInCenterIfOutsideViewport(lineNumber);
   };
 
-  // Show which source line the current instruction came from. Skipped while running at speed, where it
-  // would jump around the editor many times a second.
+  // Keep the editor's highlight on the current instruction's line, whether stepping or running.
   useEffect(() => {
-    if (running && SPEEDS[speed].kind === 'time') return;
-    const line = commands[instructionPosition]?.SourceLineNumber;
-    if (line != null) highlightSourceLine(line, line % pastelPalette.length);
-  }, [commands, instructionPosition, running, speed]);
+    if (sketchLine) highlightSourceLine(sketchLine.line, sketchLine.inLibrary);
+    else clearHighlightedSourceLine();
+  }, [sketchLine]);
 
   // Emulator controls ---------------------------------------------------------------------------------
   // The program runs on the backend emulator, which keeps the machine between requests. Each step or
@@ -294,11 +328,20 @@ function App({ onExit }: { onExit: () => void })
     machineRef.current = machine;
     setMachineData(machine);
     setInstructionPosition(state.index);
+    const own = commandsRef.current[state.index]?.SourceLineNumber ?? null;
+    if (own != null) lastSketchLineRef.current = own;
+    const line =
+      own ??
+      callingSketchLine(state.dataSpace, machine.SP, commandsRef.current, indexByAddressRef.current) ??
+      lastSketchLineRef.current;
+    setSketchLine((prev) =>
+      line == null ? null : prev?.line === line && prev.inLibrary === (own == null) ? prev : { line, inLibrary: own == null },
+    );
     setChangedRegisters(changed);
     setCycles(state.cycles);
     if (state.error) {
       stop();
-      setErrorMessages([`The program stopped: ${state.error}`]);
+      reportError(`The program stopped: ${state.error}`);
     }
   };
 
@@ -312,20 +355,25 @@ function App({ onExit }: { onExit: () => void })
   // button in the Run panel stops it.
   const resetMachine = async ({ keepRunning = false } = {}) => {
     if (!keepRunning) stop();
-    clearHighlightedSourceLine();
+    lastSketchLineRef.current = null;
+    setSketchLine(null);
     if (commandsRef.current.length === 0) return;
     try {
       applyState(await resetEmulator());
       setErrorMessages([]);
     } catch (e) {
-      setErrorMessages([errorText(e, 'Failed to reset the emulator')]);
+      reportError(errorText(e, 'Failed to reset the emulator'));
     }
   };
 
   const loadProgram = async (instructions: CommandInformation[], lines: string[]) => {
     stop();
-    clearHighlightedSourceLine();
+    lastSketchLineRef.current = null;
+    setSketchLine(null);
     commandsRef.current = instructions;
+    indexByAddressRef.current = new Map(
+      instructions.flatMap((c, i) => (c.ProgramAddressByte != null ? [[c.ProgramAddressByte, i] as const] : [])),
+    );
     setCommands(instructions);
     machineRef.current = freshMachine();
     if (instructions.length === 0) {
@@ -341,7 +389,7 @@ function App({ onExit }: { onExit: () => void })
     try {
       applyState(await stepEmulator(currentInputs()));
     } catch (e) {
-      setErrorMessages([errorText(e, 'Failed to run instruction')]);
+      reportError(errorText(e, 'Failed to run instruction'));
     }
   };
 
@@ -371,7 +419,7 @@ function App({ onExit }: { onExit: () => void })
         if (spent < FRAME_MS) await sleep(FRAME_MS - spent);
       }
     } catch (e) {
-      setErrorMessages([errorText(e, 'Failed to run the program')]);
+      reportError(errorText(e, 'Failed to run the program'));
     } finally {
       stop();
     }
@@ -384,7 +432,7 @@ function App({ onExit }: { onExit: () => void })
     const lines = ParseHexDataLines(content);
     setDataLines(lines);
     if (lines.length === 0) {
-      setErrorMessages(['No instruction data records found in HEX file.']);
+      reportError('No instruction data records found in HEX file.');
       setHexTab('errors');
       return;
     }
@@ -415,11 +463,41 @@ function App({ onExit }: { onExit: () => void })
 
   // --- Build progress ---------------------------------------------------------------------------
 
-  const startBuild = (title: string, steps: { id: string; label: string }[]) =>
-    setBuild({ title, startedAt: performance.now(), steps: steps.map((st) => ({ ...st, status: 'pending' as const })) });
+  const appendOutput = (...lines: OutputLine[]) => setOutputLog((log) => [...log, ...lines]);
+
+  const showOutput = (open: boolean) => {
+    window.clearTimeout(outputCloseTimer.current);
+    setOutputOpen(open);
+  };
+
+  // A problem while running the program (or loading a file) goes to the Output panel, which opens to show it.
+  const reportError = (message: string) => {
+    setErrorMessages([message]);
+    appendOutput({ text: message, kind: 'error' });
+    showOutput(true);
+  };
+
+  // The build log reads like Visual Studio's Output window: a header, a "1>" line for every step and every
+  // progress line from arduino-cli, then a one-line summary.
+  const startBuild = (title: string, steps: { id: string; label: string }[], what: string) => {
+    window.clearTimeout(freshSuccessTimer.current);
+    setFreshSuccess(false);
+    showOutput(true);
+    const startedAt = performance.now();
+    buildInfoRef.current = { title, startedAt };
+    setBuild({ title, startedAt, steps: steps.map((st) => ({ ...st, status: 'pending' as const })), progress: 0 });
+    setOutputLog([
+      { text: `${title} started at ${new Date().toLocaleTimeString()}...`, kind: 'muted' },
+      { text: `1>------ ${title} started: ${what}, Board: Arduino Uno (ATmega328P) ------` },
+    ]);
+  };
+
+  const advance = (progress?: number) => {
+    if (progress != null) setBuild((b) => b && { ...b, progress: Math.max(b.progress, progress) });
+  };
 
   // Finish the step in progress and start the next one.
-  const enterStep = (id: string, detail?: string) =>
+  const enterStep = (id: string, detail?: string) => {
     setBuild((b) => {
       if (!b) return b;
       const t = performance.now();
@@ -427,18 +505,32 @@ function App({ onExit }: { onExit: () => void })
         ...b,
         steps: b.steps.map((st) =>
           st.id === id
-            ? { ...st, status: 'active', startedAt: t, detail }
+            ? { ...st, status: 'active' as const, startedAt: t }
             : st.status === 'active'
-              ? { ...st, status: 'done', endedAt: t }
+              ? { ...st, status: 'done' as const, endedAt: t }
               : st,
         ),
       };
     });
+    appendOutput({ text: `1>${detail ?? id}` });
+    advance(stepProgress(id));
+  };
 
-  const stepDetail = (detail: string) =>
-    setBuild((b) => b && { ...b, steps: b.steps.map((st) => (st.status === 'active' ? { ...st, detail } : st)) });
+  // A progress line from arduino-cli
+  const stepDetail = (detail: string) => {
+    appendOutput({ text: `1>${detail}` });
+    advance(cliProgress(detail));
+  };
 
-  const endBuild = (ok: boolean) =>
+  const endBuild = (ok: boolean, errors: string[] = []) => {
+    const { title, startedAt } = buildInfoRef.current;
+    const elapsed = seconds(performance.now() - startedAt);
+    appendOutput(
+      ...errors.map((e): OutputLine => ({ text: `1>${e}`, kind: 'error' })),
+      ok
+        ? { text: `========== ${title}: 1 succeeded, 0 failed, ${elapsed} ==========`, kind: 'success' }
+        : { text: `========== ${title}: 0 succeeded, 1 failed, ${elapsed} ==========`, kind: 'error' },
+    );
     setBuild((b) => {
       if (!b) return b;
       const t = performance.now();
@@ -446,6 +538,7 @@ function App({ onExit }: { onExit: () => void })
         ...b,
         endedAt: t,
         failed: !ok,
+        progress: ok ? 1 : b.progress,
         // On success, steps that weren't reported separately (an older API does them all in one go) count as done.
         steps: b.steps.map((st) =>
           st.status === 'active'
@@ -456,19 +549,18 @@ function App({ onExit }: { onExit: () => void })
         ),
       };
     });
+    if (ok) {
+      setFreshSuccess(true);
+      freshSuccessTimer.current = window.setTimeout(() => setFreshSuccess(false), 5000);
+      outputCloseTimer.current = window.setTimeout(() => setOutputOpen(false), 2500);
+    }
+  };
 
   // Tick the elapsed times while something is in progress.
   useEffect(() => {
     if (!build || build.endedAt) return;
     const id = setInterval(() => setNow(performance.now()), 200);
     return () => clearInterval(id);
-  }, [build]);
-
-  // A successful build's summary goes away on its own; a failed one stays until dismissed.
-  useEffect(() => {
-    if (!build?.endedAt || build.failed) return;
-    const id = setTimeout(() => setBuild((b) => (b === build ? null : b)), 4000);
-    return () => clearTimeout(id);
   }, [build]);
 
   const convertToInstructions = async (lines = dataLines) => {
@@ -480,7 +572,7 @@ function App({ onExit }: { onExit: () => void })
         throw new Error('No HEX instruction data available. Upload or compile code first.');
       }
 
-      startBuild('Loading hex file', HEX_STEPS);
+      startBuild('Load', HEX_STEPS, 'File: .hex');
       enterStep('decode', `Decoding ${lines.length} lines of hex data`);
       const instructions = await findAllInstructions(lines);
       enterStep('load', `Loading ${instructions.length} instructions into the emulator`);
@@ -488,7 +580,7 @@ function App({ onExit }: { onExit: () => void })
       setCompiledFrom('hex');
       endBuild(true);
     } catch (e) {
-      endBuild(false);
+      endBuild(false, [errorText(e, 'Failed to convert to instructions')]);
       setErrorMessages([errorText(e, 'Failed to convert to instructions')]);
       setHexTab('errors');
     } finally {
@@ -501,16 +593,17 @@ function App({ onExit }: { onExit: () => void })
     try {
       setLoading(true);
       setErrorMessages([]);
-      startBuild('Compiling', COMPILE_STEPS);
+      startBuild('Build', COMPILE_STEPS, `Sketch: ${projectName.trim() || 'Untitled project'}`);
       const result = await compileCodeStream(codeInput, (progress) => {
         if (progress.type === 'stage') enterStep(progress.stage, progress.message);
         else stepDetail(progress.message);
       });
 
       if (result.errors.length > 0 || !result.hexText) {
-        endBuild(false);
+        const errors = result.errors.length > 0 ? result.errors.map(tidyCompilerMessage) : ['Failed to compile code'];
+        endBuild(false, errors);
         setElfText("");
-        setErrorMessages(result.errors.length > 0 ? result.errors : ['Failed to compile code']);
+        setErrorMessages(errors);
         return false;
       }
 
@@ -520,7 +613,7 @@ function App({ onExit }: { onExit: () => void })
       const lines = ParseHexDataLines(result.hexText);
       setDataLines(lines);
       if (lines.length === 0) {
-        endBuild(false);
+        endBuild(false, ['Compilation succeeded but no HEX instruction data records were found.']);
         setErrorMessages(['Compilation succeeded but no HEX instruction data records were found.']);
         return false;
       }
@@ -533,7 +626,7 @@ function App({ onExit }: { onExit: () => void })
       return true;
     }
     catch (e) {
-      endBuild(false);
+      endBuild(false, [errorText(e, 'Failed to compile code')]);
       setErrorMessages([errorText(e, 'Failed to compile code')]);
       return false;
     }
@@ -664,8 +757,6 @@ function App({ onExit }: { onExit: () => void })
 
   const goHome = () => {
     if (running) stop();
-    // Only one Learn open at a time, so lesson progress isn't kept in two places
-    if (tab === 'learn') setTab('code');
     setView('home');
   };
 
@@ -710,6 +801,22 @@ function App({ onExit }: { onExit: () => void })
     setVisitedWorkspace(false);
   };
 
+  // Autosave: a moment after the last change. Ctrl+S / Cmd+S still saves straight away.
+  useEffect(() => {
+    if (!dirty) return;
+    const id = window.setTimeout(saveProject, 800);
+    return () => window.clearTimeout(id);
+  }, [dirty, saveProject]);
+
+  const toggleDebugger = (open: boolean) => {
+    setDebuggerOpen(open);
+    try {
+      localStorage.setItem(DEBUGGER_KEY, open ? 'shown' : 'hidden');
+    } catch {
+      // Not remembering it is fine
+    }
+  };
+
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       if ((e.metaKey || e.ctrlKey) && e.key === 's') {
@@ -734,16 +841,6 @@ function App({ onExit }: { onExit: () => void })
           ? 'Stopped'
           : 'Ready';
 
-  const errorsPanel = errorMessages.length > 0 && (
-    <div className="code-errors" role="log" aria-live="polite">
-      <div className="code-errors-title">Errors</div>
-      <ul>
-        {errorMessages.map((message, index) => (
-          <li key={index}>{message}</li>
-        ))}
-      </ul>
-    </div>
-  );
 
   return (
     <>
@@ -765,13 +862,8 @@ function App({ onExit }: { onExit: () => void })
       {/* The workspace stays mounted behind the home screen, so the editor keeps its undo history */}
       <div className="wb-app app-main" hidden={view === 'home'}>
         <header className="wb-header">
-          {/* The hamster sprints whenever the emulator is busy. Clicking the logo goes back home. */}
-          <button type="button" className="wb-brand wb-home" onClick={goHome} title="Home: all projects">
-            <HamsterWheel running={running || loading} className="wb-hamster" />
-            <span>
-              <span className="brand-ohm">Ohm</span>ster
-            </span>
-          </button>
+          {/* The logo's menu goes back to all projects or signs out; the hamster sprints while the emulator is busy */}
+          <LogoMenu busy={running || loading} onHome={goHome} onSignOut={onExit} />
 
           <div className="wb-project">
             <input
@@ -783,11 +875,13 @@ function App({ onExit }: { onExit: () => void })
               }}
               aria-label="Project name"
             />
-            <span className={`wb-save-state${dirty ? ' dirty' : ''}`}>{dirty ? 'Unsaved' : 'Saved'}</span>
+            <ProjectMenu projects={projects} currentId={project.id} onOpen={openProject} onNew={() => setNaming(true)} onHome={goHome} />
+            {/* Projects save themselves a moment after each change */}
+            <span className={`wb-save-state${dirty ? ' dirty' : ''}`}>{dirty ? 'Saving…' : 'Saved'}</span>
           </div>
 
           <nav className="wb-tabs" role="tablist" aria-label="View">
-            {(['code', 'design', 'learn'] as const).map((t) => (
+            {(['code', 'design'] as const).map((t) => (
               <button key={t} type="button" role="tab" aria-selected={tab === t} className={tab === t ? 'active' : ''} onClick={() => setTab(t)}>
                 {TAB_LABELS[t]}
               </button>
@@ -795,71 +889,209 @@ function App({ onExit }: { onExit: () => void })
           </nav>
 
           <div className="wb-header-actions">
-            <span className={`wb-status ${loading ? 'wb-status-busy' : `wb-status-${programStatus.toLowerCase().replace(/[^a-z]/g, '')}`}`}>
-              {loading && <span className="wb-spinner" aria-hidden="true" />}
-              {programStatus}
-            </span>
+            {/* Build compiles the sketch; Run builds it first if it has changed, then runs it */}
+            <button
+              type="button"
+              className="wb-icon-btn"
+              onClick={handleCompileCode}
+              disabled={loading || running}
+              title="Build"
+              aria-label="Build"
+            >
+              <svg viewBox="0 0 24 24" aria-hidden="true">
+                <line x1="4.5" y1="19.5" x2="12.5" y2="11.5" className="icon-stroke" />
+                <rect x="10" y="6" width="10" height="5.5" rx="1.2" transform="rotate(45 15 8.75)" />
+              </svg>
+            </button>
             {running ? (
-              <button type="button" className="wb-btn stop" onClick={stop}>
-                ■ Stop
+              <button type="button" className="wb-icon-btn stop" onClick={stop} title="Stop" aria-label="Stop">
+                <svg viewBox="0 0 24 24" aria-hidden="true">
+                  <rect x="6.5" y="6.5" width="11" height="11" rx="1.5" />
+                </svg>
               </button>
             ) : (
-              <button type="button" className="wb-btn primary" onClick={handleRunClick} disabled={loading}>
-                Run ▶
+              <button type="button" className="wb-icon-btn primary" onClick={handleRunClick} disabled={loading} title="Run" aria-label="Run">
+                <svg viewBox="0 0 24 24" aria-hidden="true">
+                  <path d="M8 5.5v13l10.5-6.5z" />
+                </svg>
               </button>
             )}
-            <button type="button" className="wb-btn" onClick={saveProject} title="Save (Ctrl+S / Cmd+S)">
-              Save
-            </button>
-            <button type="button" className="wb-btn ghost" onClick={onExit}>
-              Exit
+            <span className="toolbar-divider" />
+            <button
+              type="button"
+              className={`wb-icon-btn quiet${debuggerOpen ? ' on' : ''}`}
+              onClick={() => toggleDebugger(!debuggerOpen)}
+              aria-pressed={debuggerOpen}
+              title={debuggerOpen ? 'Hide debugger' : 'Show debugger'}
+              aria-label={debuggerOpen ? 'Hide debugger' : 'Show debugger'}
+            >
+              <svg viewBox="0 0 24 24" aria-hidden="true">
+                <rect x="3.5" y="5" width="17" height="14" rx="2" className="icon-outline" />
+                <rect x="13.5" y="5" width="7" height="14" rx="1" />
+              </svg>
             </button>
           </div>
         </header>
 
         <div className="wb-body">
-          {tab !== 'learn' && (
-            <ProjectsSidebar
-              projects={projects}
-              currentId={project.id}
-              currentName={projectName}
-              collapsed={sidebarCollapsed}
-              onToggle={() => setSidebarCollapsed((c) => !c)}
-              onOpen={openProject}
-              onNew={() => setNaming(true)}
-              onDelete={deleteProject}
-            />
-          )}
-
           <div className="wb-content">
-            {build && <BuildProgress build={build} now={now} onDismiss={() => setBuild(null)} />}
-
-            {/* Code and Design stay mounted so the editor keeps its undo history and the bench its state */}
-            <section className="code-view" hidden={tab !== 'code'}>
-              <div className="code-main">
-                <div className="code-toolbar">
-                  <div className="segmented small" role="tablist" aria-label="Source">
-                    <button type="button" className={codeSource === 'sketch' ? 'active' : ''} onClick={() => setCodeSource('sketch')}>
-                      Sketch
-                    </button>
-                    <button type="button" className={codeSource === 'hex' ? 'active' : ''} onClick={() => setCodeSource('hex')}>
-                      Hex file
-                    </button>
-                  </div>
-                  <div className="code-toolbar-actions">
-                    {codeSource === 'sketch' ? (
-                      <button type="button" className="wb-btn" onClick={handleCompileCode} disabled={loading || running}>
-                        Compile
+            {/* Code or Design on the left, with the debugger beside either one, so you can watch the chip and
+                the circuit at the same time. Both views stay mounted so the editor keeps its undo history and
+                the bench its state. */}
+            <div className={`wb-stage${debuggerOpen ? '' : ' no-debugger'}`}>
+              <section className="code-view" hidden={tab !== 'code'}>
+                <div className="code-main">
+                  <div className="code-toolbar">
+                    <div className="segmented small" role="tablist" aria-label="Source">
+                      <button type="button" className={codeSource === 'sketch' ? 'active' : ''} onClick={() => setCodeSource('sketch')}>
+                        Sketch
                       </button>
-                    ) : (
-                      <>
+                      <button type="button" className={codeSource === 'hex' ? 'active' : ''} onClick={() => setCodeSource('hex')}>
+                        Hex file
+                      </button>
+                    </div>
+                    {codeSource === 'hex' && (
+                      <div className="code-toolbar-actions">
                         <input type="file" ref={fileInputRef} onChange={handleFileSelect} accept=".hex" hidden />
                         <button type="button" className="wb-btn" onClick={() => fileInputRef.current?.click()} disabled={running}>
                           Open .hex…
                         </button>
-                      </>
+                      </div>
                     )}
-                    <span className="toolbar-divider" />
+                  </div>
+
+                  <div className="code-editor" hidden={codeSource !== 'sketch'}>
+                    <Editor
+                      language="cpp"
+                      theme="vs-dark"
+                      value={codeInput}
+                      onMount={handleCodeEditorMount}
+                      onChange={(value) => {
+                        setCodeInput(value ?? '');
+                        markDirty();
+                      }}
+                      options={{
+                        automaticLayout: true,
+                        minimap: { enabled: false },
+                        fontSize: 14,
+                        fontFamily: "'Ubuntu Sans Mono', 'Ubuntu Mono', monospace",
+                        tabSize: 2,
+                        insertSpaces: true,
+                        wordWrap: 'on',
+                        suggestOnTriggerCharacters: true,
+                        quickSuggestions: {
+                          other: true,
+                          comments: false,
+                          strings: false,
+                        },
+                        scrollBeyondLastLine: false,
+                      }}
+                    />
+                  </div>
+
+                  {codeSource === 'hex' && (
+                    <div className="hex-view">
+                      {!hexText ? (
+                        <div
+                          className={`hex-drop${isDraggingOver ? ' over' : ''}`}
+                          onDrop={handleDrop}
+                          onDragOver={(e) => {
+                            e.preventDefault();
+                            setIsDraggingOver(true);
+                          }}
+                          onDragLeave={() => setIsDraggingOver(false)}
+                        >
+                          {isDraggingOver ? 'Release to load' : (
+                            <>
+                              Drop a <code>.hex</code> file here, or compile your sketch to see its hex
+                            </>
+                          )}
+                        </div>
+                      ) : (
+                        <>
+                          <div className="segmented small">
+                            {(
+                              [
+                                ['hex', 'Hex'],
+                                ['elf', 'ELF'],
+                                ['unknown', `Unknown (${unknownInstructions.length})`],
+                                ['errors', `Errors (${errorMessages.length})`],
+                              ] as const
+                            ).map(([id, label]) => (
+                              <button key={id} type="button" className={hexTab === id ? 'active' : ''} onClick={() => setHexTab(id)}>
+                                {label}
+                              </button>
+                            ))}
+                          </div>
+                          {hexTab === 'hex' && <pre className="hex-pre">{hexText}</pre>}
+                          {hexTab === 'elf' && <pre className="hex-pre">{elfText || 'No ELF yet. Compile code to see ELF data.'}</pre>}
+                          {hexTab === 'unknown' && (
+                            <pre className="hex-pre">
+                              {unknownInstructions.length === 0
+                                ? 'No unknown instructions found.'
+                                : unknownInstructions.map((c) => formatCommandBytes(c.CommandBytes)).join('\n')}
+                            </pre>
+                          )}
+                          {hexTab === 'errors' && <pre className="hex-pre">{errorMessages.join('\n') || 'No errors.'}</pre>}
+                        </>
+                      )}
+                    </div>
+                  )}
+
+                </div>
+              </section>
+
+              <section className="design-view" hidden={tab !== 'design'}>
+                <PartsPalette
+                  tool={tool}
+                  onToolChange={setTool}
+                  ledColor={ledColor}
+                  onLedColorChange={setLedColor}
+                  wireColor={wireColor}
+                  onWireColorChange={setWireColor}
+                />
+                <Workbench
+                  circuit={circuit}
+                  onChange={(c) => {
+                    setCircuit(c);
+                    markDirty();
+                  }}
+                  tool={tool}
+                  onToolChange={setTool}
+                  wireColor={wireColor}
+                  state={circuitState}
+                  pressed={pressed}
+                  onPress={(id, down) =>
+                    setPressed((prev) => {
+                      const next = new Set(prev);
+                      if (down) next.add(id);
+                      else next.delete(id);
+                      return next;
+                    })
+                  }
+                  running={running}
+                  onBoardReset={() => resetMachine({ keepRunning: true })}
+                />
+              </section>
+
+              {debuggerOpen && (
+              <Debugger
+                onHide={() => toggleDebugger(false)}
+                commands={commands}
+                position={instructionPosition}
+                libraryLine={sketchLine?.inLibrary ? sketchLine.line : null}
+                machine={machineData}
+                changedRegisters={changedRegisters}
+                cycles={cycles}
+                onInstructionClick={(i) => {
+                  const line = commands[i]?.SourceLineNumber;
+                  if (line == null) return;
+                  setTab('code');
+                  setCodeSource('sketch');
+                  highlightSourceLine(line);
+                }}
+                controls={
+                  <>
                     <button type="button" className="wb-btn" onClick={handleStep} disabled={running || commands.length === 0}>
                       Step
                     </button>
@@ -873,141 +1105,33 @@ function App({ onExit }: { onExit: () => void })
                         </button>
                       ))}
                     </div>
-                  </div>
-                </div>
-
-                <div className="code-editor" hidden={codeSource !== 'sketch'}>
-                  <Editor
-                    language="cpp"
-                    theme="vs-dark"
-                    value={codeInput}
-                    onMount={handleCodeEditorMount}
-                    onChange={(value) => {
-                      setCodeInput(value ?? '');
-                      markDirty();
-                    }}
-                    options={{
-                      automaticLayout: true,
-                      minimap: { enabled: false },
-                      fontSize: 14,
-                      fontFamily: "'Ubuntu Sans Mono', 'Ubuntu Mono', monospace",
-                      tabSize: 2,
-                      insertSpaces: true,
-                      wordWrap: 'on',
-                      suggestOnTriggerCharacters: true,
-                      quickSuggestions: {
-                        other: true,
-                        comments: false,
-                        strings: false,
-                      },
-                      scrollBeyondLastLine: false,
-                    }}
-                  />
-                </div>
-
-                {codeSource === 'hex' && (
-                  <div className="hex-view">
-                    {!hexText ? (
-                      <div
-                        className={`hex-drop${isDraggingOver ? ' over' : ''}`}
-                        onDrop={handleDrop}
-                        onDragOver={(e) => {
-                          e.preventDefault();
-                          setIsDraggingOver(true);
-                        }}
-                        onDragLeave={() => setIsDraggingOver(false)}
-                      >
-                        {isDraggingOver ? 'Release to load' : (
-                          <>
-                            Drop a <code>.hex</code> file here, or compile your sketch to see its hex
-                          </>
-                        )}
-                      </div>
-                    ) : (
-                      <>
-                        <div className="segmented small">
-                          {(
-                            [
-                              ['hex', 'Hex'],
-                              ['elf', 'ELF'],
-                              ['unknown', `Unknown (${unknownInstructions.length})`],
-                              ['errors', `Errors (${errorMessages.length})`],
-                            ] as const
-                          ).map(([id, label]) => (
-                            <button key={id} type="button" className={hexTab === id ? 'active' : ''} onClick={() => setHexTab(id)}>
-                              {label}
-                            </button>
-                          ))}
-                        </div>
-                        {hexTab === 'hex' && <pre className="hex-pre">{hexText}</pre>}
-                        {hexTab === 'elf' && <pre className="hex-pre">{elfText || 'No ELF yet. Compile code to see ELF data.'}</pre>}
-                        {hexTab === 'unknown' && (
-                          <pre className="hex-pre">
-                            {unknownInstructions.length === 0
-                              ? 'No unknown instructions found.'
-                              : unknownInstructions.map((c) => formatCommandBytes(c.CommandBytes)).join('\n')}
-                          </pre>
-                        )}
-                        {hexTab === 'errors' && <pre className="hex-pre">{errorMessages.join('\n') || 'No errors.'}</pre>}
-                      </>
-                    )}
-                  </div>
-                )}
-
-                {errorsPanel}
-              </div>
-
-              <Debugger
-                commands={commands}
-                position={instructionPosition}
-                machine={machineData}
-                changedRegisters={changedRegisters}
-                cycles={cycles}
-                onInstructionClick={(i) => {
-                  const line = commands[i]?.SourceLineNumber;
-                  if (line == null) return;
-                  setCodeSource('sketch');
-                  highlightSourceLine(line, line % pastelPalette.length);
-                }}
-              />
-            </section>
-
-            <section className="design-view" hidden={tab !== 'design'}>
-              <PartsPalette
-                tool={tool}
-                onToolChange={setTool}
-                ledColor={ledColor}
-                onLedColorChange={setLedColor}
-                wireColor={wireColor}
-                onWireColorChange={setWireColor}
-              />
-              <Workbench
-                circuit={circuit}
-                onChange={(c) => {
-                  setCircuit(c);
-                  markDirty();
-                }}
-                tool={tool}
-                onToolChange={setTool}
-                wireColor={wireColor}
-                state={circuitState}
-                pressed={pressed}
-                onPress={(id, down) =>
-                  setPressed((prev) => {
-                    const next = new Set(prev);
-                    if (down) next.add(id);
-                    else next.delete(id);
-                    return next;
-                  })
+                  </>
                 }
-                running={running}
-                onBoardReset={() => resetMachine({ keepRunning: true })}
               />
-            </section>
+              )}
+            </div>
 
-            {tab === 'learn' && <Learn onTryCode={tryLessonCode} />}
+            {outputOpen && (
+              <OutputPanel
+                lines={outputLog}
+                height={outputHeight}
+                onResize={setOutputHeight}
+                onClear={() => setOutputLog([])}
+                onClose={() => showOutput(false)}
+              />
+            )}
           </div>
         </div>
+
+        <StatusBar
+          build={build}
+          now={now}
+          freshSuccess={freshSuccess}
+          idleText={programStatus}
+          running={running}
+          outputOpen={outputOpen}
+          onToggleOutput={() => showOutput(!outputOpen)}
+        />
       </div>
     </>
   )

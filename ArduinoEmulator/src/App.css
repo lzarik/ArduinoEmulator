@@ -58,25 +58,13 @@
 }
 
 /* ============================================================
-   Monaco source-line decorations (unchanged)
+   Monaco: the line of the sketch the current instruction belongs to, in the debugger's amber. Lighter,
+   with a dashed edge, while running library code that line called (digitalWrite, delay…).
    ============================================================ */
-.monaco-editor .source-line-highlight-0 { background: rgba(255, 223, 229, 0.55); }
-.monaco-editor .source-line-highlight-1 { background: rgba(255, 238, 207, 0.55); }
-.monaco-editor .source-line-highlight-2 { background: rgba(228, 246, 217, 0.55); }
-.monaco-editor .source-line-highlight-3 { background: rgba(217, 243, 244, 0.55); }
-.monaco-editor .source-line-highlight-4 { background: rgba(221, 232, 255, 0.55); }
-.monaco-editor .source-line-highlight-5 { background: rgba(234, 223, 255, 0.55); }
-.monaco-editor .source-line-highlight-6 { background: rgba(255, 223, 244, 0.55); }
-.monaco-editor .source-line-highlight-7 { background: rgba(246, 231, 217, 0.55); }
-
-.monaco-editor .source-line-highlight-gutter-0 { border-left: 3px solid #ffdfe5; }
-.monaco-editor .source-line-highlight-gutter-1 { border-left: 3px solid #ffeecf; }
-.monaco-editor .source-line-highlight-gutter-2 { border-left: 3px solid #e4f6d9; }
-.monaco-editor .source-line-highlight-gutter-3 { border-left: 3px solid #d9f3f4; }
-.monaco-editor .source-line-highlight-gutter-4 { border-left: 3px solid #dde8ff; }
-.monaco-editor .source-line-highlight-gutter-5 { border-left: 3px solid #eadfff; }
-.monaco-editor .source-line-highlight-gutter-6 { border-left: 3px solid #ffdff4; }
-.monaco-editor .source-line-highlight-gutter-7 { border-left: 3px solid #f6e7d9; }
+.monaco-editor .source-line-current { background: rgba(253, 230, 138, 0.2); }
+.monaco-editor .source-line-current-gutter { border-left: 4px solid #fde68a; }
+.monaco-editor .source-line-library { background: rgba(253, 230, 138, 0.13); }
+.monaco-editor .source-line-library-gutter { border-left: 4px dashed rgba(253, 230, 138, 0.75); }
 
 /* ============================================================
    Landing / login page
@@ -1464,19 +1452,160 @@
   padding-top: 20px;
 }
 
-.splash-page-about .splash-sheet-body {
+/* The board that slams onto the What is Ohmster page, under the text. Its spot keeps its height before
+   the board is first drawn, so the page doesn't jump, and so it can be spotted scrolling into view. */
+.about-board-spot {
   min-height: 640px;
 }
 
 /* Room above and below the board for its rows of callouts */
-.splash-page-about .about-diagram {
+.about-board-spot .about-diagram {
   min-height: 640px;
   padding: 90px 0 110px;
   box-sizing: border-box;
 }
 
-.splash-page-about .about-board-wrap {
+.about-board-spot .about-board-wrap {
   width: min(58%, 560px);
+}
+
+/* Mission: your text in the notebook's handwriting lines, ending on one line that stands out */
+.notebook-text.mission p + p { margin-top: var(--cell); }
+
+.notebook-text .mission-line {
+  font-weight: 800;
+  color: #1f7f82;
+}
+
+/* Features: index cards pinned on the page */
+.features-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(260px, 1fr));
+  gap: 22px;
+  margin: 0;
+  padding: 8px 0 4px;
+  list-style: none;
+}
+
+.feature-card {
+  padding: 20px 22px 22px;
+  border: 1px solid rgba(34, 54, 77, 0.12);
+  border-top: 3px solid #2a9a9d;
+  border-radius: 4px;
+  background: #fff;
+  box-shadow: 0 6px 16px rgba(34, 54, 77, 0.08);
+}
+
+.feature-number {
+  font-family: var(--font-mono);
+  font-size: 12px;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  color: #1f7f82;
+}
+
+.feature-card h3 {
+  margin: 6px 0 8px;
+  font-size: 19px;
+  font-weight: 800;
+  letter-spacing: -0.01em;
+  color: var(--ink);
+}
+
+.feature-card p {
+  margin: 0;
+  font-size: 15px;
+  line-height: 1.6;
+  color: rgba(34, 54, 77, 0.82);
+}
+
+/* How It Works: a spot for the tutorial video, then the steps joined by a trace like a circuit */
+.how {
+  display: flex;
+  flex-direction: column;
+  gap: 32px;
+  padding-top: 4px;
+}
+
+.how-video {
+  aspect-ratio: 16 / 9;
+  max-height: 380px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 12px;
+  border: 2px dashed rgba(34, 54, 77, 0.22);
+  border-radius: 10px;
+  background: rgba(34, 54, 77, 0.04);
+  color: rgba(34, 54, 77, 0.6);
+  font-size: 15px;
+  font-weight: 600;
+}
+
+.how-video svg {
+  width: 56px;
+  height: 56px;
+  padding: 14px;
+  border: 2px solid currentColor;
+  border-radius: 50%;
+  fill: currentColor;
+  box-sizing: border-box;
+}
+
+.how-steps {
+  position: relative;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.how-step {
+  position: relative;
+  display: flex;
+  gap: 20px;
+  padding-bottom: 26px;
+}
+
+/* The trace joining each step's number to the next one */
+.how-step:not(:last-child)::before {
+  content: '';
+  position: absolute;
+  top: 36px;
+  bottom: 0;
+  left: 17px;
+  width: 2px;
+  background: rgba(42, 154, 157, 0.35);
+}
+
+.how-step:last-child { padding-bottom: 0; }
+
+.how-step-number {
+  flex-shrink: 0;
+  width: 36px;
+  height: 36px;
+  display: grid;
+  place-items: center;
+  border-radius: 50%;
+  background: #2a9a9d;
+  color: #fff;
+  font-weight: 800;
+  box-shadow: 0 0 0 5px #fbf8ef;
+}
+
+.how-step h3 {
+  margin: 6px 0 4px;
+  font-size: 19px;
+  font-weight: 800;
+  color: var(--ink);
+}
+
+.how-step p {
+  margin: 0;
+  max-width: 640px;
+  font-size: 15.5px;
+  line-height: 1.6;
+  color: rgba(34, 54, 77, 0.82);
 }
 
 /* Meet the Team: each person's photo taped into the notebook, tilted a little, straightening on hover */
