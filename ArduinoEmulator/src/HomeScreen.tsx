@@ -1,12 +1,15 @@
 import { HamsterWheel } from './HamsterWheel'
-import { Learn } from './Learn'
+import { Learn, type LearnProps } from './Learn'
 import { timeAgo, type Project } from './projects'
+import { RESOURCES, siteOf } from './resources'
 import { CircuitPreview } from './Workbench'
 
-// The first screen after signing in: your projects, most recent first, each with a picture of its bench,
-// and the Learn course, which doesn't need a project open.
+// The first screen after signing in: your projects, most recent first, each with a picture of its bench;
+// the Learn course, which doesn't need a project open; and Resources, other tools worth knowing about.
 
-export type HomeSection = 'projects' | 'learn'
+export type HomeSection = 'projects' | 'learn' | 'resources'
+
+const SECTION_LABELS: Record<HomeSection, string> = { projects: 'Projects', learn: 'Learn', resources: 'Resources' }
 
 interface HomeScreenProps {
   /** Most recent first. */
@@ -17,15 +20,19 @@ interface HomeScreenProps {
   onNew: () => void
   onDelete: (project: Project) => void
   onExit: () => void
+  /** The signed-in account */
+  username: string
   section: HomeSection
   onSection: (section: HomeSection) => void
+  /** The account's progress through the course, and what to do as it changes */
+  learn: Omit<LearnProps, 'onTryCode'>
   /** "Open in editor" on a lesson's example */
   onTryCode: (code: string, lessonTitle: string) => void
 }
 
 const plural = (n: number, word: string) => `${n} ${word}${n === 1 ? '' : 's'}`
 
-export function HomeScreen({ projects, unsavedId, onOpen, onNew, onDelete, onExit, section, onSection, onTryCode }: HomeScreenProps) {
+export function HomeScreen({ projects, unsavedId, onOpen, onNew, onDelete, onExit, username, section, onSection, learn, onTryCode }: HomeScreenProps) {
   return (
     <div className="wb-app home-screen">
       <header className="wb-header">
@@ -36,7 +43,7 @@ export function HomeScreen({ projects, unsavedId, onOpen, onNew, onDelete, onExi
           </span>
         </div>
         <nav className="wb-tabs" role="tablist" aria-label="Home">
-          {(['projects', 'learn'] as const).map((s) => (
+          {(['projects', 'learn', 'resources'] as const).map((s) => (
             <button
               key={s}
               type="button"
@@ -45,11 +52,14 @@ export function HomeScreen({ projects, unsavedId, onOpen, onNew, onDelete, onExi
               className={section === s ? 'active' : ''}
               onClick={() => onSection(s)}
             >
-              {s === 'projects' ? 'Projects' : 'Learn'}
+              {SECTION_LABELS[s]}
             </button>
           ))}
         </nav>
         <div className="wb-header-actions">
+          <span className="home-account">
+            Signed in as <strong>{username}</strong>
+          </span>
           <button type="button" className="wb-btn ghost" onClick={onExit}>
             Sign out
           </button>
@@ -57,7 +67,9 @@ export function HomeScreen({ projects, unsavedId, onOpen, onNew, onDelete, onExi
       </header>
 
       {section === 'learn' ? (
-        <Learn onTryCode={onTryCode} />
+        <Learn {...learn} onTryCode={onTryCode} />
+      ) : section === 'resources' ? (
+        <Resources />
       ) : (
         <main className="home-body">
           <div className="home-inner">
@@ -118,5 +130,39 @@ export function HomeScreen({ projects, unsavedId, onOpen, onNew, onDelete, onExi
         </main>
       )}
     </div>
+  )
+}
+
+function Resources() {
+  return (
+    <main className="home-body">
+      <div className="home-inner">
+        <div className="home-head">
+          <div>
+            <h1>Resources</h1>
+            <p>Other tools worth knowing about. Each link opens in a new tab.</p>
+          </div>
+        </div>
+
+        {RESOURCES.map((group) => (
+          <section key={group.title} className="resource-group">
+            <h2>{group.title}</h2>
+            <ul className="resource-list">
+              {group.resources.map((r) => (
+                <li key={r.url}>
+                  <a className="resource" href={r.url} target="_blank" rel="noreferrer">
+                    <span className="resource-name">
+                      {r.name} <span aria-hidden="true">↗</span>
+                    </span>
+                    <span className="resource-site">{siteOf(r.url)}</span>
+                    <span className="resource-description">{r.description}</span>
+                  </a>
+                </li>
+              ))}
+            </ul>
+          </section>
+        ))}
+      </div>
+    </main>
   )
 }

@@ -1,6 +1,8 @@
+import { apiFetch } from './account'
 import { defaultCircuit, newId, type Circuit } from './circuit'
 
-// Saved projects live in the browser's localStorage, so they stay on this computer and browser.
+// Saved projects belong to the signed-in account and are kept by the C# API
+// (API/Controllers/ProjectsController.cs), so they follow the account to any computer.
 
 export interface Project {
   id: string
@@ -10,21 +12,21 @@ export interface Project {
   updatedAt: number
 }
 
-const STORAGE_KEY = 'eexpo.projects'
+// Before accounts, projects were saved in the browser under this key. The first account to sign in on
+// this browser takes them over; the old copy is kept under BROWSER_BACKUP_KEY just in case.
+const BROWSER_KEY = 'eexpo.projects'
+const BROWSER_BACKUP_KEY = 'ohmster.projects.imported'
 
-export const BLINK_CODE = `#include <Arduino.h>
+// New projects start with an empty sketch: the Arduino include and the two functions every Arduino
+// program needs (an empty file won't compile), with nothing inside them.
+export const BLANK_SKETCH = `#include <Arduino.h>
 
 void setup()
 {
-  pinMode(13, OUTPUT);
 }
 
 void loop()
 {
-  digitalWrite(13, HIGH);
-  delay(500);
-  digitalWrite(13, LOW);
-  delay(500);
 }
 `
 
@@ -39,23 +41,50 @@ export function timeAgo(t: number) {
 }
 
 export function newProject(name = 'Untitled project'): Project {
-  return { id: newId(), name, code: BLINK_CODE, circuit: defaultCircuit(), updatedAt: Date.now() }
+  return { id: newId(), name, code: BLANK_SKETCH, circuit: defaultCircuit(), updatedAt: Date.now() }
 }
 
-export function loadProjects(): Project[] {
+/** The signed-in account's projects, newest first. Throws if the API can't be reached. */
+export async function fetchProjects(): Promise<Project[]> {
+  const response = await apiFetch('/Projects')
+  if (!response.ok) throw new Error(`Couldn't load projects (${response.status})`)
+  return ((await response.json()) as Project[]).sort((a, b) => b.updatedAt - a.updatedAt)
+}
+
+/** Creates or updates the project on the server. Throws if it wasn't saved. */
+export async function uploadProject(project: Project) {
+  const response = await apiFetch(`/Projects/${encodeURIComponent(project.id)}`, { method: 'PUT', body: JSON.stringify(project) })
+  if (!response.ok) throw new Error(`Couldn't save "${project.name}" (${response.status})`)
+}
+
+export async function deleteSavedProject(id: string) {
+  const response = await apiFetch(`/Projects/${encodeURIComponent(id)}`, { method: 'DELETE' })
+  if (!response.ok) throw new Error(`Couldn't delete the project (${response.status})`)
+}
+
+/** Moves any projects saved in this browser from before accounts into the signed-in account. */
+export async function importBrowserProjects() {
+  let raw: string | null = null
   try {
-    const raw = localStorage.getItem(STORAGE_KEY)
-    const list = raw ? (JSON.parse(raw) as Project[]) : []
-    return Array.isArray(list) ? list.sort((a, b) => b.updatedAt - a.updatedAt) : []
+    raw = localStorage.getItem(BROWSER_KEY)
   } catch {
-    return []
+    return
   }
-}
-
-export function storeProjects(projects: Project[]) {
+  if (!raw) return
+  let list: Project[] = []
   try {
-    localStorage.setItem(STORAGE_KEY, JSON.stringify(projects))
+    const parsed = JSON.parse(raw)
+    if (Array.isArray(parsed)) list = parsed
   } catch {
-    // Storage can be full or blocked (e.g. private browsing); saving just won't persist.
+    // Unreadable: leave it where it is
+    return
+  }
+  // Only forget them once every one is safely on the server
+  await Promise.all(list.map(uploadProject))
+  try {
+    localStorage.setItem(BROWSER_BACKUP_KEY, raw)
+    localStorage.removeItem(BROWSER_KEY)
+  } catch {
+    // They're saved to the account either way
   }
 }

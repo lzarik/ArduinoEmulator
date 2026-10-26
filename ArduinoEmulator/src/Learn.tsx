@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState, type CSSProperties } from 'react'
+import { useEffect, useMemo, useRef, useState, type CSSProperties } from 'react'
 import { HamsterWheel } from './HamsterWheel'
 import { COURSE, type Lesson } from './lessons'
 import { lessonDoc } from './lessonDoc'
@@ -10,39 +10,12 @@ import { LessonBody, Quiz } from './LessonDocument'
 
 const ALL_LESSONS = COURSE.flatMap((unit, u) => unit.lessons.map((lesson) => ({ ...lesson, unit, unitNumber: u + 1 })))
 const LESSON_INDEX = new Map(ALL_LESSONS.map((l, i) => [l.id, i]))
-const LESSON_KEY = 'eexpo.learn.lesson'
-const DONE_KEY = 'eexpo.learn.done'
 
-function rememberedLesson() {
-  try {
-    const id = localStorage.getItem(LESSON_KEY)
-    return ALL_LESSONS.find((l) => l.id === id)?.id ?? ALL_LESSONS[0].id
-  } catch {
-    return ALL_LESSONS[0].id
-  }
-}
-
-function rememberedDone() {
-  try {
-    const ids = JSON.parse(localStorage.getItem(DONE_KEY) ?? '[]')
-    return new Set<string>(Array.isArray(ids) ? ids.filter((id) => LESSON_INDEX.has(id)) : [])
-  } catch {
-    return new Set<string>()
-  }
-}
-
-function remember(key: string, value: string) {
-  try {
-    localStorage.setItem(key, value)
-  } catch {
-    // Not remembering progress is fine; it just won't survive a reload.
-  }
-}
-
-// YouTube links are embedded; anything else is treated as a video file.
+// YouTube links are embedded (privacy-enhanced, so no cookies until the video plays); anything else is
+// treated as a video file.
 function youtubeEmbed(url: string) {
   const match = url.match(/(?:youtube\.com\/watch\?v=|youtu\.be\/|youtube\.com\/embed\/)([\w-]{6,})/)
-  return match ? `https://www.youtube.com/embed/${match[1]}` : null
+  return match ? `https://www.youtube-nocookie.com/embed/${match[1]}?rel=0` : null
 }
 
 function LessonVideo({ lesson }: { lesson: Lesson }) {
@@ -58,24 +31,51 @@ function LessonVideo({ lesson }: { lesson: Lesson }) {
   }
   const embed = youtubeEmbed(lesson.video)
   return (
-    <div className="lesson-video">
-      {embed ? (
-        <iframe src={embed} title={lesson.title} allow="encrypted-media; picture-in-picture; fullscreen" allowFullScreen />
-      ) : (
-        <video src={lesson.video} controls />
+    <figure className="lesson-video-figure">
+      <div className="lesson-video">
+        {embed ? (
+          <iframe
+            src={embed}
+            title={lesson.title}
+            allow="encrypted-media; picture-in-picture; fullscreen"
+            referrerPolicy="strict-origin-when-cross-origin"
+            loading="lazy"
+            allowFullScreen
+          />
+        ) : (
+          <video src={lesson.video} controls />
+        )}
+      </div>
+      {(lesson.videoBy || embed) && (
+        <figcaption className="lesson-video-credit">
+          {lesson.videoBy && <span>Video by {lesson.videoBy}</span>}
+          {embed && (
+            <a href={lesson.video} target="_blank" rel="noreferrer">
+              Watch on YouTube ↗
+            </a>
+          )}
+        </figcaption>
       )}
-    </div>
+    </figure>
   )
 }
 
-interface LearnProps {
+export interface LearnProps {
+  /** Finished lessons' ids */
+  completed: string[]
+  /** The lesson to show; the first one if none */
+  currentLesson: string | null
+  onOpenLesson: (lessonId: string) => void
+  onComplete: (lessonId: string) => void
+  onReset: () => void
   /** Opens a lesson's example code in the editor, as a new project named after the lesson. */
   onTryCode: (code: string, lessonTitle: string) => void
 }
 
-export function Learn({ onTryCode }: LearnProps) {
-  const [lessonId, setLessonId] = useState(rememberedLesson)
-  const [done, setDone] = useState(rememberedDone)
+// Progress belongs to the signed-in account (learnProgress.ts); App holds it and saves each change.
+export function Learn({ completed, currentLesson, onOpenLesson, onComplete, onReset, onTryCode }: LearnProps) {
+  const lessonId = currentLesson && LESSON_INDEX.has(currentLesson) ? currentLesson : ALL_LESSONS[0].id
+  const done = useMemo(() => new Set(completed.filter((id) => LESSON_INDEX.has(id))), [completed])
   // The LED that was just lit, so only it plays the switch-on flicker.
   const [justLit, setJustLit] = useState<string | null>(null)
   const [generating, setGenerating] = useState(false)
@@ -88,10 +88,7 @@ export function Learn({ onTryCode }: LearnProps) {
   const doc = lessonDoc(lesson.id)
   const isDone = done.has(lesson.id)
 
-  const open = (id: string) => {
-    setLessonId(id)
-    remember(LESSON_KEY, id)
-  }
+  const open = onOpenLesson
 
   // A new lesson starts at the top, and its LED is scrolled into view on the map.
   useEffect(() => {
@@ -103,10 +100,8 @@ export function Learn({ onTryCode }: LearnProps) {
 
   const complete = () => {
     if (done.has(lesson.id)) return
-    const next = new Set(done).add(lesson.id)
-    setDone(next)
+    onComplete(lesson.id)
     setJustLit(lesson.id)
-    remember(DONE_KEY, JSON.stringify([...next]))
     setGenerating(true)
     window.clearTimeout(generatingTimer.current)
     generatingTimer.current = window.setTimeout(() => setGenerating(false), 2600)
@@ -114,8 +109,7 @@ export function Learn({ onTryCode }: LearnProps) {
 
   const resetProgress = () => {
     if (!window.confirm('Turn off every LED and start the course again?')) return
-    setDone(new Set())
-    remember(DONE_KEY, '[]')
+    onReset()
   }
 
   const lit = (i: number) => i >= 0 && i < ALL_LESSONS.length && done.has(ALL_LESSONS[i].id)

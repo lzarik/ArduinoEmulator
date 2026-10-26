@@ -32,11 +32,12 @@ function useDropdown() {
 interface LogoMenuProps {
   /** The hamster sprints while the emulator is busy */
   busy: boolean
+  username: string
   onHome: () => void
   onSignOut: () => void
 }
 
-export function LogoMenu({ busy, onHome, onSignOut }: LogoMenuProps) {
+export function LogoMenu({ busy, username, onHome, onSignOut }: LogoMenuProps) {
   const { open, setOpen, ref } = useDropdown()
   const choose = (action: () => void) => {
     setOpen(false)
@@ -53,6 +54,7 @@ export function LogoMenu({ busy, onHome, onSignOut }: LogoMenuProps) {
       </button>
       {open && (
         <div className="hdr-dropdown" role="menu">
+          <div className="hdr-dropdown-label">Signed in as {username}</div>
           <button type="button" role="menuitem" onClick={() => choose(onHome)}>
             All projects
           </button>

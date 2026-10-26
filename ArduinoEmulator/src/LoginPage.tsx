@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
+import { AccountError, logIn, signUp, type Account } from './account'
 import { ArduinoBoard } from './ArduinoBoard'
 import { HamsterWheel } from './HamsterWheel'
 import { HeroWordmark } from './HeroWordmark'
@@ -6,7 +7,7 @@ import { FeaturesPage, HowItWorksPage, MissionPage } from './SplashPages'
 import { TeamSection } from './TeamSection'
 
 interface Props {
-  onLogin: () => void
+  onLogin: (account: Account) => void
   /** Called when the sign-in form opens, so the workspace can start loading. */
   onSignInIntent?: () => void
 }
@@ -16,7 +17,8 @@ type AuthMode = 'signin' | 'create'
 interface AuthFormProps {
   mode: AuthMode
   onModeChange: (mode: AuthMode) => void
-  onSubmit: () => void
+  /** Signs up or logs in; rejects with the message to show if the API turns it down. */
+  onSubmit: (username: string, password: string) => Promise<void>
 }
 
 function AuthForm({ mode, onModeChange, onSubmit }: AuthFormProps) {
@@ -24,15 +26,26 @@ function AuthForm({ mode, onModeChange, onSubmit }: AuthFormProps) {
   const [password, setPassword] = useState('')
   const [confirmPassword, setConfirmPassword] = useState('')
   const [error, setError] = useState('')
+  const [busy, setBusy] = useState(false)
 
-  const handleSubmit = (e: React.FormEvent) => {
+  const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault()
+    if (!username.trim() || !password) {
+      setError('Enter a username and password.')
+      return
+    }
     if (mode === 'create' && password !== confirmPassword) {
       setError('Passwords do not match.')
       return
     }
     setError('')
-    onSubmit()
+    setBusy(true)
+    try {
+      await onSubmit(username.trim(), password)
+    } catch (err) {
+      setError(err instanceof AccountError ? err.message : 'Something went wrong. Please try again.')
+      setBusy(false)
+    }
   }
 
   return (
@@ -96,10 +109,11 @@ function AuthForm({ mode, onModeChange, onSubmit }: AuthFormProps) {
           </div>
         )}
 
+        {mode === 'create' && !error && <div className="auth-hint">At least 8 characters.</div>}
         {error && <div className="auth-error" role="alert">{error}</div>}
 
-        <button type="submit" className="landing-btn primary auth-submit">
-          {mode === 'signin' ? 'Log In' : 'Sign Up'}
+        <button type="submit" className="landing-btn primary auth-submit" disabled={busy}>
+          {busy ? (mode === 'signin' ? 'Logging in…' : 'Creating account…') : mode === 'signin' ? 'Log In' : 'Sign Up'}
         </button>
       </form>
     </div>
@@ -250,9 +264,22 @@ const BOARD_CENTER: [number, number] = [330, 268]
 
 // The board slams onto the page, ink ripples spread from the impact, and each callout appears as the
 // ripple reaches it. Remounted (via key) every time its section scrolls into view, so it replays.
-function BoardDiagram() {
+// `visit` goes up each time the board comes back into view; the slam then plays again on the same
+// drawing (restarting its animations), rather than drawing the whole board again mid-scroll.
+function BoardDiagram({ visit }: { visit: number }) {
+  const ref = useRef<HTMLDivElement>(null)
+  const firstVisit = useRef(visit)
+
+  useEffect(() => {
+    if (visit === firstVisit.current) return
+    ref.current?.getAnimations({ subtree: true }).forEach((animation) => {
+      animation.cancel()
+      animation.play()
+    })
+  }, [visit])
+
   return (
-    <div className="about-diagram">
+    <div className="about-diagram" ref={ref}>
       <div className="about-board-wrap">
         <div className="about-impact-shadow" />
         {[0, 1, 2].map((i) => (
@@ -324,7 +351,7 @@ export function LoginPage({ onLogin, onSignInIntent }: Props) {
   // intro: the opening plays · dive: the camera dives into the label as the splash fades in · done
   const [stage, setStage] = useState<'intro' | 'dive' | 'done'>('intro')
   const [activeSection, setActiveSection] = useState('')
-  // Bumped each time the What is Ohmster section (with the board) scrolls into view, to replay the slam.
+  // Bumped each time the What is Ohmster section's board scrolls back into view, to replay the slam.
   const [boardVisit, setBoardVisit] = useState(0)
   const pageRef = useRef<HTMLDivElement>(null)
   const heroRef = useRef<HTMLElement>(null)
@@ -382,10 +409,20 @@ export function LoginPage({ onLogin, onSignInIntent }: Props) {
     if (root.scrollTop + root.clientHeight >= root.scrollHeight - 2) current = SPLASH_SECTIONS[SPLASH_SECTIONS.length - 1].id
     setActiveSection(current)
 
+    // The slam plays once the board's spot is well into view, and only plays again after the spot has
+    // gone completely off screen, so it never replays on a board that's still visible.
     const board = root.querySelector('#splash-what .about-board-spot')?.getBoundingClientRect()
-    const visible = !!board && board.top < rootTop + root.clientHeight * 0.7 && board.bottom > rootTop + root.clientHeight * 0.3
-    if (visible && !boardInView.current) setBoardVisit((v) => v + 1)
-    boardInView.current = visible
+    if (board) {
+      const viewBottom = rootTop + root.clientHeight
+      const wellInView = board.top < rootTop + root.clientHeight * 0.7 && board.bottom > rootTop + root.clientHeight * 0.3
+      const offScreen = board.bottom <= rootTop || board.top >= viewBottom
+      if (wellInView && !boardInView.current) {
+        boardInView.current = true
+        setBoardVisit((v) => v + 1)
+      } else if (offScreen) {
+        boardInView.current = false
+      }
+    }
   }, [])
 
   // Reveal what's on screen once the splash appears.
@@ -401,9 +438,10 @@ export function LoginPage({ onLogin, onSignInIntent }: Props) {
 
   const closeAuth = useCallback(() => setAuthMode(null), [])
 
-  const handleAuthSubmit = () => {
+  const handleAuthSubmit = async (username: string, password: string) => {
+    const account = await (authMode === 'create' ? signUp : logIn)(username, password)
     setLeaving(true)
-    setTimeout(onLogin, 380)
+    setTimeout(() => onLogin(account), 380)
   }
 
   const sectionBody = (id: string) => {
@@ -413,7 +451,7 @@ export function LoginPage({ onLogin, onSignInIntent }: Props) {
           <>
             <WhatIsOhmster />
             {/* Not drawn until it's first reached: it's a second detailed board drawing */}
-            <div className="about-board-spot">{boardVisit > 0 && <BoardDiagram key={boardVisit} />}</div>
+            <div className="about-board-spot">{boardVisit > 0 && <BoardDiagram visit={boardVisit} />}</div>
           </>
         )
       case 'mission':

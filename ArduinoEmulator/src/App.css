@@ -678,22 +678,22 @@
 }
 
 /* About page: board slam, ink ripples and callouts */
+/* Only transform and opacity change, so the board is drawn once and the fall is just moved and scaled
+   on the GPU. (Blurring a board scaled up this far meant repainting a huge layer on every frame.) */
 @keyframes board-slam {
   0% {
     opacity: 0;
-    transform: translateY(-35%) scale(2.6) rotate(-9deg);
-    filter: blur(8px);
+    transform: translateY(-30%) scale(1.9) rotate(-8deg);
     animation-timing-function: cubic-bezier(0.55, 0, 0.85, 0.35);
   }
+  20% { opacity: 1; }
   55% {
-    opacity: 1;
     transform: translateY(0) scale(0.93) rotate(1deg);
-    filter: blur(0);
     animation-timing-function: cubic-bezier(0.2, 0.8, 0.3, 1);
   }
   72% { transform: translateY(0) scale(1.035) rotate(-0.4deg); }
   86% { transform: translateY(0) scale(0.99) rotate(0deg); }
-  100% { opacity: 1; transform: translateY(0) scale(1) rotate(0deg); filter: blur(0); }
+  100% { opacity: 1; transform: translateY(0) scale(1) rotate(0deg); }
 }
 
 @keyframes page-shake {
@@ -755,6 +755,7 @@
 .about-slam {
   position: relative;
   z-index: 1;
+  will-change: transform, opacity;
   animation: board-slam 0.75s 0.55s both;
 }
 
@@ -1089,8 +1090,19 @@
   color: #fecaca;
 }
 
+.auth-hint {
+  margin-top: -6px;
+  font-size: 13px;
+  color: rgba(255, 255, 255, 0.5);
+}
+
 .auth-submit {
   margin-top: 6px;
+}
+
+.auth-submit:disabled {
+  opacity: 0.7;
+  cursor: progress;
 }
 
 @media (max-width: 640px) {

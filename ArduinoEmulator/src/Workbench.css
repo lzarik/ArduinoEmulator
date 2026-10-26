@@ -183,6 +183,14 @@
 }
 
 .wb-save-state.dirty { color: #f0c36a; }
+.wb-save-state.failed { color: #f28b82; }
+
+.home-account {
+  font-size: 13px;
+  color: var(--wb-dim);
+}
+
+.home-account strong { color: var(--wb-text); font-weight: 600; }
 
 .wb-tabs {
   position: absolute;
@@ -898,6 +906,25 @@
   border-radius: 10px;
   background: #0b141e;
 }
+
+.lesson-video-figure { margin: 0 0 28px; }
+.lesson-video-figure .lesson-video { margin-bottom: 8px; }
+
+.lesson-video-credit {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  font-size: 13px;
+  color: var(--doc-soft);
+}
+
+.lesson-video-credit a {
+  color: inherit;
+  font-weight: 600;
+  text-decoration: none;
+}
+
+.lesson-video-credit a:hover { color: var(--doc-ink); text-decoration: underline; }
 
 .lesson-video iframe,
 .lesson-video video {
@@ -2095,6 +2122,64 @@
 
 /* Learn, opened from the home screen, fills the space under the header */
 .home-screen > .learn { min-height: 0; }
+
+/* Resources: other tools, grouped, one link and one line each */
+.resource-group + .resource-group { margin-top: 40px; }
+
+.resource-group h2 {
+  margin: 0 0 14px;
+  font-size: 13px;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--wb-dim);
+}
+
+.resource-list {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(320px, 1fr));
+  gap: 14px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.resource {
+  display: grid;
+  gap: 4px;
+  height: 100%;
+  padding: 18px 20px;
+  border: 1px solid var(--wb-line);
+  border-radius: 10px;
+  background: var(--wb-panel);
+  color: var(--wb-text);
+  text-decoration: none;
+  box-sizing: border-box;
+  transition: border-color 0.15s;
+}
+
+.resource:hover { border-color: var(--wb-line-strong); }
+.resource:focus-visible { outline: 2px solid var(--wb-accent); outline-offset: 2px; }
+
+.resource-name {
+  font-size: 17px;
+  font-weight: 700;
+}
+
+.resource-name span { color: var(--wb-dim); font-weight: 400; }
+.resource:hover .resource-name span { color: var(--wb-accent); }
+
+.resource-site {
+  font-size: 13px;
+  color: var(--wb-faint);
+}
+
+.resource-description {
+  margin-top: 4px;
+  font-size: 15px;
+  line-height: 1.5;
+  color: var(--wb-dim);
+}
 
 /* New-project dialog */
 .np-backdrop {

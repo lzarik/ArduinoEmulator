@@ -2,7 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import Editor, { type Monaco, type OnMount } from '@monaco-editor/react'
 import './monacoSetup'
 import './Workbench.css'
-import { findAllInstructions, compileCodeStream, loadEmulator, resetEmulator, runEmulator, stepEmulator } from './api'
+import { findAllInstructions, compileCodeStream, loadEmulator, pollEmulator, resetEmulator, startEmulator, stepEmulator, stopEmulator } from './api'
 import type { CommandInformation, EmulatorState, MachineData, PinInputs } from './api'
 import { Workbench, type Tool } from './Workbench'
 import { Debugger } from './Debugger'
@@ -13,7 +13,9 @@ import { HomeScreen, type HomeSection } from './HomeScreen'
 import { cliProgress, seconds, stepProgress, type BuildState, type OutputLine } from './buildLog'
 import { OutputPanel, StatusBar } from './OutputPanel'
 import { WIRE_COLORS, evaluateCircuit, type Circuit, type LedColor } from './circuit'
-import { loadProjects, newProject, storeProjects, type Project } from './projects'
+import { deleteSavedProject, newProject, uploadProject, type Project } from './projects'
+import type { Account } from './account'
+import { resetLearnProgress, saveCompletedLesson, saveCurrentLesson, type LearnProgress } from './learnProgress'
 
 function ConvertHexToNumber(hexDigits: string): number { return parseInt(hexDigits, 16); }
 
@@ -88,7 +90,6 @@ const arduinoCompletionLabels = [
   'loop'
 ];
 
-const CLOCK_HZ = 16_000_000;
 const DATA_SIZE = 0x900;
 
 const freshMachine = (): MachineData => ({
@@ -132,7 +133,7 @@ const SPEEDS = [
   { label: 'Real time', kind: 'time', factor: 1 },
 ] as const;
 
-// How often the run loop asks the backend for the next slice of emulated time.
+// How often the run loop asks the backend for the latest snapshot while it runs the program.
 const FRAME_MS = 33;
 
 type Tab = 'code' | 'design';
@@ -164,24 +165,40 @@ const tidyCompilerMessage = (message: string) => message.replace(/(?:\/[^\s/:]+)
 
 const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 
-function App({ onExit }: { onExit: () => void })
+interface AppProps {
+  account: Account;
+  /** The account's saved projects, newest first, as loaded at sign-in */
+  initialProjects: Project[];
+  /** The account's Learn progress, as loaded at sign-in */
+  initialProgress: LearnProgress;
+  onExit: () => void;
+}
+
+function App({ account, initialProjects, initialProgress, onExit }: AppProps)
 {
 
   // Projects ----------------------------------------------------------------------------------------
-  const [projects, setProjects] = useState<Project[]>(() => loadProjects());
-  const [project, setProject] = useState<Project>(() => loadProjects()[0] ?? newProject('My first project'));
+  // Saved to the account on the server (projects.ts); this list is kept in step as they're saved.
+  const [projects, setProjects] = useState<Project[]>(initialProjects);
+  const [project, setProject] = useState<Project>(() => initialProjects[0] ?? newProject('My first project'));
   const [projectName, setProjectName] = useState(project.name);
   const [codeInput, setCodeInput] = useState(project.code);
   const [circuit, setCircuit] = useState<Circuit>(project.circuit);
   // Starts clean: either the most recent saved project, or an untouched placeholder (with no saved
   // projects, the home screen asks for a new one before the workspace opens).
   const [dirty, setDirty] = useState(false);
+  // The last save didn't reach the server; autosave keeps retrying, more slowly
+  const [saveFailed, setSaveFailed] = useState(false);
 
   // Signing in lands on the home screen; opening or creating a project switches to the workspace.
   const [view, setView] = useState<'home' | 'workspace'>('home');
   const [homeSection, setHomeSection] = useState<HomeSection>('projects');
   const [visitedWorkspace, setVisitedWorkspace] = useState(false);
   const [naming, setNaming] = useState(false);
+
+  // Learn ---------------------------------------------------------------------------------------------
+  // Saved to the account as it changes (learnProgress.ts)
+  const [learnProgress, setLearnProgress] = useState<LearnProgress>(initialProgress);
 
   // Workspace ---------------------------------------------------------------------------------------
   const [tab, setTab] = useState<Tab>('code');
@@ -351,6 +368,9 @@ function App({ onExit }: { onExit: () => void })
     return { b: pins.B, c: pins.C, d: pins.D };
   };
 
+  // How fast a run is really going (1 = keeping up), when the computer can't keep up with the speed asked for
+  const [runSpeed, setRunSpeed] = useState<number | null>(null);
+
   // Restart the program. The board's reset button keeps it running, like a real board; the Reset
   // button in the Run panel stops it.
   const resetMachine = async ({ keepRunning = false } = {}) => {
@@ -393,34 +413,46 @@ function App({ onExit }: { onExit: () => void })
     }
   };
 
-  // Runs until stopped: the program's loop() runs forever, just like on a board.
+  // Runs until stopped: the program's loop() runs forever, just like on a board. In the timed speeds the
+  // backend runs it on its own, paced to the clock, and this loop collects a snapshot each frame (and sends
+  // the breadboard's inputs). The Instruction speed steps one instruction at a time instead.
   const handleRun = async () => {
     if (runningRef.current || commandsRef.current.length === 0) return;
     runningRef.current = true;
     setRunning(true);
     setErrorMessages([]);
+    let backendFactor: number | null = null;
     try {
-      let last = performance.now();
       while (runningRef.current) {
         const mode = SPEEDS[speedRef.current];
         if (mode.kind === 'step') {
+          if (backendFactor !== null) {
+            await stopEmulator();
+            backendFactor = null;
+            setRunSpeed(null);
+          }
           applyState(await stepEmulator(currentInputs()));
           await sleep(mode.delay);
-          last = performance.now();
           continue;
         }
-        // Ask for as much emulated time as real time has passed (scaled by the speed), capped so a
-        // stall doesn't turn into one enormous request.
-        const now = performance.now();
-        const elapsed = Math.min(now - last, 250);
-        last = now;
-        applyState(await runEmulator((elapsed / 1000) * CLOCK_HZ * mode.factor, currentInputs()));
-        const spent = performance.now() - now;
+        const frameStart = performance.now();
+        // Start the background run, or change its speed
+        const state =
+          backendFactor === mode.factor
+            ? await pollEmulator(currentInputs())
+            : await startEmulator(mode.factor, currentInputs());
+        backendFactor = mode.factor;
+        applyState(state);
+        setRunSpeed(state.speed != null && state.speed < 0.9 ? state.speed : null);
+        if (backendFactor !== null && state.running === false && !state.error) break;
+        const spent = performance.now() - frameStart;
         if (spent < FRAME_MS) await sleep(FRAME_MS - spent);
       }
     } catch (e) {
       reportError(errorText(e, 'Failed to run the program'));
     } finally {
+      if (backendFactor !== null) await stopEmulator().catch(() => undefined);
+      setRunSpeed(null);
       stop();
     }
   };
@@ -709,11 +741,17 @@ function App({ onExit }: { onExit: () => void })
   const saveProject = useCallback(() => {
     const saved: Project = { ...project, name: projectName.trim() || 'Untitled project', code: codeInput, circuit, updatedAt: Date.now() };
     const list = [saved, ...projects.filter((p) => p.id !== saved.id)];
-    storeProjects(list);
     setProjects(list);
     setProject(saved);
     setProjectName(saved.name);
     setDirty(false);
+    uploadProject(saved).then(
+      () => setSaveFailed(false),
+      () => {
+        setSaveFailed(true);
+        setDirty(true);
+      },
+    );
   }, [project, projectName, codeInput, circuit, projects]);
 
   const openProject = (p: Project, discardChanges = false) => {
@@ -742,10 +780,18 @@ function App({ onExit }: { onExit: () => void })
 
   const deleteProject = (p: Project) => {
     if (!window.confirm(`Delete "${p.name}"? This can't be undone.`)) return;
-    const list = projects.filter((saved) => saved.id !== p.id);
-    storeProjects(list);
-    setProjects(list);
-    if (p.id === project.id) setDirty(true);
+    deleteSavedProject(p.id).then(
+      () => {
+        setProjects((list) => list.filter((saved) => saved.id !== p.id));
+        // Leave a fresh, hidden project open, so autosave doesn't bring the deleted one back
+        if (p.id === project.id) {
+          openProject(newProject('My first project'), true);
+          setDirty(false);
+          setVisitedWorkspace(false);
+        }
+      },
+      () => window.alert(`Couldn't delete "${p.name}". Check that the Ohmster API is running, then try again.`),
+    );
   };
 
   // Home screen -------------------------------------------------------------------------------------
@@ -764,10 +810,12 @@ function App({ onExit }: { onExit: () => void })
   const createProject = (name: string) => {
     const created = newProject(name);
     if (!openProject(created)) return;
-    const list = [created, ...projects];
-    storeProjects(list);
-    setProjects(list);
+    setProjects([created, ...projects]);
     setDirty(false);
+    uploadProject(created).catch(() => {
+      setSaveFailed(true);
+      setDirty(true);
+    });
     setNaming(false);
     setTab('code');
     setCodeSource('sketch');
@@ -804,9 +852,40 @@ function App({ onExit }: { onExit: () => void })
   // Autosave: a moment after the last change. Ctrl+S / Cmd+S still saves straight away.
   useEffect(() => {
     if (!dirty) return;
-    const id = window.setTimeout(saveProject, 800);
+    const id = window.setTimeout(saveProject, saveFailed ? 5000 : 800);
     return () => window.clearTimeout(id);
-  }, [dirty, saveProject]);
+  }, [dirty, saveFailed, saveProject]);
+
+  const openLesson = (lessonId: string) => {
+    setLearnProgress((progress) => ({ ...progress, currentLesson: lessonId }));
+    void saveCurrentLesson(lessonId).catch(() => undefined);
+  };
+
+  const completeLesson = (lessonId: string) => {
+    setLearnProgress((progress) => ({ ...progress, completed: [...progress.completed, lessonId] }));
+    saveCompletedLesson(lessonId).catch(() => {
+      setLearnProgress((progress) => ({ ...progress, completed: progress.completed.filter((id) => id !== lessonId) }));
+      window.alert("Couldn't save your progress. Check that the Ohmster API is running, then take the quiz again.");
+    });
+  };
+
+  const resetLessons = () => {
+    const before = learnProgress.completed;
+    setLearnProgress((progress) => ({ ...progress, completed: [] }));
+    resetLearnProgress().catch(() => {
+      setLearnProgress((progress) => ({ ...progress, completed: before }));
+      window.alert("Couldn't reset your progress. Check that the Ohmster API is running, then try again.");
+    });
+  };
+
+  // Changes from the last moment before signing out are saved first
+  const signOut = async () => {
+    if (running) stop();
+    if (dirty && (isSaved || visitedWorkspace)) {
+      await uploadProject({ ...project, name: projectName.trim() || 'Untitled project', code: codeInput, circuit, updatedAt: Date.now() }).catch(() => undefined);
+    }
+    onExit();
+  };
 
   const toggleDebugger = (open: boolean) => {
     setDebuggerOpen(open);
@@ -836,7 +915,9 @@ function App({ onExit }: { onExit: () => void })
     : commands.length === 0
       ? 'No program loaded'
       : running
-        ? 'Running'
+        ? runSpeed != null
+          ? `Running at ${Math.round(runSpeed * 100)}% speed (the computer is busy)`
+          : 'Running'
         : cycles > 0
           ? 'Stopped'
           : 'Ready';
@@ -851,7 +932,9 @@ function App({ onExit }: { onExit: () => void })
           onOpen={openFromHome}
           onNew={() => setNaming(true)}
           onDelete={deleteFromHome}
-          onExit={onExit}
+          onExit={signOut}
+          username={account.username}
+          learn={{ ...learnProgress, onOpenLesson: openLesson, onComplete: completeLesson, onReset: resetLessons }}
           section={homeSection}
           onSection={setHomeSection}
           onTryCode={tryLessonCode}
@@ -863,7 +946,7 @@ function App({ onExit }: { onExit: () => void })
       <div className="wb-app app-main" hidden={view === 'home'}>
         <header className="wb-header">
           {/* The logo's menu goes back to all projects or signs out; the hamster sprints while the emulator is busy */}
-          <LogoMenu busy={running || loading} onHome={goHome} onSignOut={onExit} />
+          <LogoMenu busy={running || loading} username={account.username} onHome={goHome} onSignOut={signOut} />
 
           <div className="wb-project">
             <input
@@ -877,7 +960,9 @@ function App({ onExit }: { onExit: () => void })
             />
             <ProjectMenu projects={projects} currentId={project.id} onOpen={openProject} onNew={() => setNaming(true)} onHome={goHome} />
             {/* Projects save themselves a moment after each change */}
-            <span className={`wb-save-state${dirty ? ' dirty' : ''}`}>{dirty ? 'Saving…' : 'Saved'}</span>
+            <span className={`wb-save-state${saveFailed ? ' failed' : dirty ? ' dirty' : ''}`}>
+              {saveFailed ? 'Not saved, retrying…' : dirty ? 'Saving…' : 'Saved'}
+            </span>
           </div>
 
           <nav className="wb-tabs" role="tablist" aria-label="View">

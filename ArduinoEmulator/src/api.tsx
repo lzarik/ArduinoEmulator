@@ -25,7 +25,8 @@ export interface CompileCodeResponse {
 }
 
 
-const API_BASE_URL = 'http://localhost:5024';
+// Another API can be used by starting Vite with VITE_API_URL set
+export const API_BASE_URL: string = import.meta.env.VITE_API_URL ?? 'http://localhost:5024';
 
 export const findAllInstructions = async (dataLines: string[]): Promise<CommandInformation[]> => {
     const response = await fetch(`${API_BASE_URL}/Visualizer/FindAllInstructions`, { // no method body causes it to be called like a get
@@ -139,6 +140,10 @@ export interface EmulatorState {
     cycles: number;
     dataSpace: number[];
     error: string | null;
+    /** True while the program runs in the background (startEmulator) */
+    running?: boolean;
+    /** How fast a background run is really going, as a fraction of the speed asked for (1 = keeping up) */
+    speed?: number | null;
 }
 
 /** Input pin levels from the breadboard, as PINB/PINC/PIND bit masks. */
@@ -165,3 +170,8 @@ export const resetEmulator = () => emulatorPost('Reset');
 export const stepEmulator = (inputs: PinInputs) => emulatorPost('Step', { cycles: 0, inputs });
 /** Runs up to `cycles` clock cycles (16,000 per emulated millisecond). */
 export const runEmulator = (cycles: number, inputs: PinInputs) => emulatorPost('Run', { cycles: Math.round(cycles), inputs });
+/** Runs the program on the server in the background at `speed` × real time; calling it again changes the speed. */
+export const startEmulator = (speed: number, inputs: PinInputs) => emulatorPost('Start', { speed, inputs });
+/** The latest snapshot of a background run, sending the breadboard's inputs. Poll it or the run stops after 3 s. */
+export const pollEmulator = (inputs: PinInputs) => emulatorPost('Poll', inputs);
+export const stopEmulator = () => emulatorPost('Stop');
